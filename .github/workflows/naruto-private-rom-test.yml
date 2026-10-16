@@ -72,7 +72,7 @@ jobs:
   boot-private-rom:
     if: ${{ inputs.run_game || github.event.head_commit.message == 'Run private ROM boot test' }}
     runs-on: ubuntu-26.04
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - name: Check required secret
         env:
@@ -229,22 +229,24 @@ jobs:
           cat > "$WORK/gui_probe.sh" <<'SH'
           #!/usr/bin/env bash
           set -eu
-          timeout --signal=TERM --kill-after=4s 35s env \
+          timeout --signal=TERM --kill-after=4s 100s env \
             HOME="$GUI_HOME" LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 \
             "$APP_PATH" -bios "$WORK/openbios-chunked.bin" -iso "$WORK/game-run.cue" \
             -exec "$PAD_SETUP" -run -interpreter -softgpu -stdout -lua_stdout \
             -logfile "$WORK/gui-probe.log" > "$WORK/gui-probe.stdout" 2>&1 &
           emu_pid=$!
-          sleep 10
-          import -window root -silent "$WORK/gui-frame-10.png"
-          sleep 10
-          import -window root -silent "$WORK/gui-frame-20.png"
+          sleep 30
+          import -window root -silent "$WORK/gui-frame-30.png"
+          sleep 30
+          import -window root -silent "$WORK/gui-frame-60.png"
+          sleep 30
+          import -window root -silent "$WORK/gui-frame-90.png"
           set +e
           wait "$emu_pid"
           rc=$?
           set -e
-          echo "GUI_PROCESS_EXIT=$rc (124 is expected when the 35-second cap is reached)"
-          for frame in "$WORK/gui-frame-10.png" "$WORK/gui-frame-20.png"; do
+          echo "GUI_PROCESS_EXIT=$rc (124 is expected when the 100-second cap is reached)"
+          for frame in "$WORK/gui-frame-30.png" "$WORK/gui-frame-60.png" "$WORK/gui-frame-90.png"; do
             echo "FRAME=$frame"
             identify -format 'FRAME_METRICS width=%w height=%h mean=%[mean] stddev=%[standard-deviation] colors=%k\n' "$frame"
             echo "OCR_TEXT_BEGIN"
@@ -259,7 +261,7 @@ jobs:
           mkdir -p "$GUI_HOME"
           echo "===== GUI PROBE: AnyLinux with private ROM and Port 1 Analog ====="
           # The screenshots remain inside the ephemeral runner and are removed in cleanup.
-          timeout --signal=TERM --kill-after=5s 50s xvfb-run -a \
+          timeout --signal=TERM --kill-after=5s 115s xvfb-run -a \
             --server-args="-screen 0 1280x800x24" bash "$WORK/gui_probe.sh"
           echo "Both builds used the same ROM, temporary CUE, OpenBIOS, CPU interpreter and 90-second limit."
           echo "A timeout or EXEC:PC0 marker alone does not prove a visible title screen or playable input."
@@ -270,7 +272,7 @@ jobs:
             rm -f "$WORK/game.bin" "$WORK/game.cue" "$WORK/game-run.cue" "$WORK/openbios-chunked.bin" "$WORK/release.json"
             rm -f "$WORK/pcsx-head.AppImage" "$WORK/anylinux.AppImage"
             rm -f "$WORK/boot.log" "$WORK/gui.log" "$WORK/frame.png" "$WORK/ocr.tsv" "$WORK/probe_screen.py"
-            rm -f "$WORK/anylinux.log" "$WORK/anylinux.stdout" "$WORK/upstream-head.log" "$WORK/upstream-head.stdout" "$WORK/gui-probe.log" "$WORK/gui-probe.stdout" "$WORK/gui-frame-10.png" "$WORK/gui-frame-20.png" "$WORK/gui_probe.sh"
-            rm -rf "$WORK/anylinux" "$WORK/head" "$WORK/home" "$WORK/home-anylinux" "$WORK/home-upstream-head" "$WORK/squashfs-root" "$WORK/profile"
+            rm -f "$WORK/anylinux.log" "$WORK/anylinux.stdout" "$WORK/upstream-head.log" "$WORK/upstream-head.stdout" "$WORK/gui-probe.log" "$WORK/gui-probe.stdout" "$WORK/gui-frame-10.png" "$WORK/gui-frame-20.png" "$WORK/gui-frame-30.png" "$WORK/gui-frame-60.png" "$WORK/gui-frame-90.png" "$WORK/gui_probe.sh"
+            rm -rf "$WORK/anylinux" "$WORK/head" "$WORK/home" "$WORK/home-anylinux" "$WORK/home-upstream-head" "$WORK/home-gui-anylinux" "$WORK/squashfs-root" "$WORK/profile"
           fi
           echo "Private ROM/BIOS files, profiles, logs and both extracted emulator trees removed from the ephemeral runner."
