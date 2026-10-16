@@ -19,7 +19,7 @@ jobs:
   trace-private-rom:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Trace private ROM CPU state' }}
     runs-on: ubuntu-26.04
-    timeout-minutes: 8
+    timeout-minutes: 25
     env:
       API: https://api.github.com/repos/zuppasoupfifaistimewa-png/naruto-shinobi-jintori-research
       RELEASE_TAG: research-emulator-pcsx-redux-2026-10-15
@@ -28,8 +28,7 @@ jobs:
       BIOS_NAME: openbios-chunked.bin
       EXPECTED_ROM_SIZE: "325989552"
       EXPECTED_ROM_SHA256: 58c389a794375b7b81b3a18877ef7965356a1332285a3590170efbf2359a3b88
-      PCSX_HEAD_NAME: PCSX-Redux-HEAD-x86_64.AppImage
-      PCSX_HEAD_EXPECTED_SHA256: 5b2bf850afea345ff1428a38ea75d1776a1857832acf873d9d72d3f4d214b0f8
+      PCSX_SOURCE_COMMIT: 6b9df482d7b77b9ae218d9c48c1ce1a43c265206
 
     steps:
       - name: Check required secret
@@ -49,7 +48,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends jq
           WORK="$RUNNER_TEMP/naruto-cpu-trace"
-          mkdir -p "$WORK/head"
+          mkdir -p "$WORK"
           echo "WORK=$WORK" >> "$GITHUB_ENV"
           echo "Temporary workspace prepared."
 
@@ -77,11 +76,6 @@ jobs:
               -H "Accept: application/octet-stream" \
               "$API/releases/assets/$id" -o "$output"
           }
-          fetch_asset "$PCSX_HEAD_NAME" pcsx-head.AppImage
-          echo "$PCSX_HEAD_EXPECTED_SHA256  pcsx-head.AppImage" | sha256sum --check -
-          chmod +x pcsx-head.AppImage
-          ( cd "$WORK/head" && ../pcsx-head.AppImage --appimage-extract >/dev/null && test -x squashfs-root/AppRun )
-          echo "Upstream HEAD build verified and extracted for the built-in CPU tracing API."
           fetch_asset "$ROM_NAME" game.bin
           fetch_asset "$CUE_NAME" game.cue
           fetch_asset "$BIOS_NAME" openbios-chunked.bin
@@ -102,6 +96,25 @@ jobs:
           print("CUE structure verified; only the temporary FILE reference was normalized.")
           PY
           echo "ROM size and SHA-256 verified."
+
+      - name: Build pinned upstream PCSX-Redux with CPU trace support
+        run: |
+          set -eu
+          echo "PCSX_SOURCE_COMMIT=$PCSX_SOURCE_COMMIT"
+          git clone --filter=blob:none --no-checkout https://github.com/grumpycoders/pcsx-redux.git "$WORK/pcsx-redux"
+          git -C "$WORK/pcsx-redux" checkout --detach "$PCSX_SOURCE_COMMIT"
+          git -C "$WORK/pcsx-redux" submodule update --init --recursive
+          test -f "$WORK/pcsx-redux/src/core/cputrace.h"
+          grep -q 'Trace = {' "$WORK/pcsx-redux/src/core/pcsxffi.lua"
+          git -C "$WORK/pcsx-redux" rev-parse HEAD
+          docker version
+          docker pull ghcr.io/grumpycoders/pcsx-redux-build:latest
+          docker image inspect --format 'PCSX_BUILD_IMAGE={{index .RepoDigests 0}}' ghcr.io/grumpycoders/pcsx-redux-build:latest
+          docker run --rm -i -u "$(id -u):$(id -g)" -w /project \
+            -v "$WORK/pcsx-redux:/project" \
+            ghcr.io/grumpycoders/pcsx-redux-build:latest make -j2
+          test -x "$WORK/pcsx-redux/pcsx-redux"
+          echo "PCSX_BUILD_RESULT=compiled pinned source with built-in CPU trace API"
 
       - name: Capture a short built-in CPU trace around executable entry
         run: |
@@ -145,7 +158,7 @@ jobs:
           set +e
           timeout --signal=TERM --kill-after=5s 35s \
             env HOME="$WORK/home-trace" LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 \
-            "$WORK/head/squashfs-root/AppRun" -no-ui \
+            "$WORK/pcsx-redux/pcsx-redux" -no-ui \
             -bios "$WORK/openbios-chunked.bin" -iso "$WORK/game-run.cue" \
             -exec "$FULL_SETUP" -run -interpreter -softgpu \
             -stdout -lua_stdout -logfile "$WORK/cpu-trace.log" > "$WORK/cpu-trace.stdout" 2>&1
@@ -175,7 +188,7 @@ jobs:
         run: |
           if [ -n "${WORK:-}" ] && [ -d "$WORK" ]; then
             rm -f "$WORK/game.bin" "$WORK/game.cue" "$WORK/game-run.cue" "$WORK/openbios-chunked.bin" "$WORK/release.json"
-            rm -f "$WORK/pcsx-head.AppImage" "$WORK/cpu-trace.log" "$WORK/cpu-trace.stdout"
-            rm -rf "$WORK/head" "$WORK/home-trace"
+            rm -f "$WORK/cpu-trace.log" "$WORK/cpu-trace.stdout"
+            rm -rf "$WORK/pcsx-redux" "$WORK/home-trace"
           fi
           echo "Temporary ROM, CUE, BIOS, emulator and trace logs removed from the ephemeral runner."
