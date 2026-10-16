@@ -177,11 +177,11 @@ jobs:
           # Match PCSX-Redux's own Analog-pad setup: setting the type alone is not enough;
           # it is cached at map() time, so connect and remap after setting it.
           PAD_SETUP=$(cat <<'LUA'
-PCSX.settings.pads[1].DeviceType = 'Analog'
-PCSX.settings.pads[1].Connected = true
-PCSX.SIO0.slots[1].pads[1].map()
-print("PAD_SETUP=port1 analog device connected and remapped")
-LUA
+          PCSX.settings.pads[1].DeviceType = 'Analog'
+          PCSX.settings.pads[1].Connected = true
+          PCSX.SIO0.slots[1].pads[1].map()
+          print("PAD_SETUP=port1 analog device connected and remapped")
+          LUA
           )
           run_probe() {
             name="$1"
