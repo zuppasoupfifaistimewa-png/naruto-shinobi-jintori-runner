@@ -164,7 +164,7 @@ jobs:
       - name: Capture emulator window and summarize OCR privately
         run: |
           set -eu
-          sudo apt-get install -y --no-install-recommends imagemagick tesseract-ocr tesseract-ocr-jpn x11-utils
+          sudo apt-get install -y --no-install-recommends imagemagick tesseract-ocr tesseract-ocr-jpn x11-utils mesa-utils
           cd "$WORK"
           cat > "$WORK/probe_screen.py" <<'PY'
           import csv, re, subprocess, sys
@@ -207,14 +207,16 @@ jobs:
           PY
           set +e
           timeout --signal=TERM --kill-after=5s 50s \
-            xvfb-run -a --server-args="-screen 0 1280x800x24" \
+            xvfb-run -a --server-args="-screen 0 1280x800x24 +extension GLX +render -noreset" \
             bash -c '
               set -eu
-              env LIBGL_ALWAYS_SOFTWARE=1 "$WORK/squashfs-root/AppRun" \
+              echo "GLX software-renderer details:"
+              LIBGL_ALWAYS_SOFTWARE=1 glxinfo -B || true
+              env LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 "$WORK/squashfs-root/AppRun" \
                 -portable "$WORK/profile" \
                 -bios "$WORK/openbios-chunked.bin" \
                 -iso "$WORK/game-run.cue" \
-                -run -interpreter -stdout -lua_stdout \
+                -run -interpreter -softgpu -stdout -lua_stdout \
                 -logfile "$WORK/boot.log" > "$WORK/gui.log" 2>&1 &
               emu_pid=$!
               sleep 25
@@ -227,8 +229,11 @@ jobs:
               echo "Selected emulator diagnostics:"
               grep -E "CD-ROM Label|CD-ROM ID|CD-ROM EXE Name|SYSTEM.CNF|EXEC:PC0|Error|ERROR|FATAL|Exception" "$WORK/boot.log" | tail -80 || true
               tail -40 "$WORK/gui.log" || true
+              pkill -TERM -P "$emu_pid" 2>/dev/null || true
               kill -TERM "$emu_pid" 2>/dev/null || true
-              wait "$emu_pid" 2>/dev/null || true
+              sleep 2
+              pkill -KILL -P "$emu_pid" 2>/dev/null || true
+              kill -KILL "$emu_pid" 2>/dev/null || true
             '
           rc=$?
           set -e
