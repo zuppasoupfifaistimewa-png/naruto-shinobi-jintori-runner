@@ -115,6 +115,7 @@ jobs:
           CUE_NAME: Naruto.-.Shinobi.no.Sato.no.Jintori.Gassen.Japan.cue
           BIOS_NAME: openbios-chunked.bin
           PCSX_HEAD_NAME: PCSX-Redux-HEAD-x86_64.AppImage
+          PCSX_HEAD_EXPECTED_SHA256: 5b2bf850afea345ff1428a38ea75d1776a1857832acf873d9d72d3f4d214b0f8
           EXPECTED_ROM_SHA256: 58c389a794375b7b81b3a18877ef7965356a1332285a3590170efbf2359a3b88
           EXPECTED_ROM_SIZE: "325989552"
         run: |
@@ -144,6 +145,7 @@ jobs:
           fetch_asset "$CUE_NAME" game.cue
           fetch_asset "$BIOS_NAME" openbios-chunked.bin
           fetch_asset "$PCSX_HEAD_NAME" pcsx-head.AppImage
+          echo "$PCSX_HEAD_EXPECTED_SHA256  pcsx-head.AppImage" | sha256sum --check -
           chmod +x pcsx-head.AppImage
           mkdir -p "$WORK/head"
           ( cd "$WORK/head" && ../pcsx-head.AppImage --appimage-extract >/dev/null && test -x squashfs-root/AppRun )
