@@ -161,33 +161,65 @@ jobs:
           PY
           echo "ROM size and SHA-256 verified; source CUE is unchanged."
 
-      - name: Attempt bounded boot with logs
+      - name: Capture a private on-runner screen and summarize OCR
         run: |
           set -eu
+          sudo apt-get install -y --no-install-recommends imagemagick tesseract-ocr tesseract-ocr-jpn
           cd "$WORK"
           mkdir -p profile
           set +e
-          timeout --signal=TERM --kill-after=5s 90s \
+          timeout --signal=TERM --kill-after=5s 50s \
             xvfb-run -a --server-args="-screen 0 1280x800x24" \
-            env LIBGL_ALWAYS_SOFTWARE=1 squashfs-root/AppRun \
-            -portable "$WORK/profile" \
-            -bios "$WORK/openbios-chunked.bin" \
-            -iso "$WORK/game-run.cue" \
-            -run -interpreter -debugger -stdout -lua_stdout \
-            -logfile "$WORK/boot.log" > "$WORK/gui.log" 2>&1
+            bash -c '
+              set -eu
+              env LIBGL_ALWAYS_SOFTWARE=1 "$WORK/squashfs-root/AppRun" \
+                -portable "$WORK/profile" \
+                -bios "$WORK/openbios-chunked.bin" \
+                -iso "$WORK/game-run.cue" \
+                -run -interpreter -stdout -lua_stdout \
+                -logfile "$WORK/boot.log" > "$WORK/gui.log" 2>&1 &
+              emu_pid=$!
+              sleep 25
+              if ! kill -0 "$emu_pid" 2>/dev/null; then
+                echo "Emulator exited before screen capture."
+                tail -80 "$WORK/gui.log" || true
+                exit 1
+              fi
+              import -window root "$WORK/frame.png"
+              identify -format "Captured screen: %wx%h; mean=%[fx:mean]; stddev=%[fx:standard_deviation]\\n" "$WORK/frame.png"
+              tesseract "$WORK/frame.png" "$WORK/ocr" -l jpn+eng tsv 2>/dev/null
+              python3 - "$WORK/ocr.tsv" <<'"'"'PY'"'"'
+          import csv, sys
+          from pathlib import Path
+          with open(sys.argv[1], newline="", encoding="utf-8") as fh:
+              rows = list(csv.DictReader(fh, delimiter="\\t"))
+          words = []
+          for row in rows:
+              value = (row.get("text") or "").strip()
+              try:
+                  confidence = float(row.get("conf", "-1"))
+              except ValueError:
+                  confidence = -1
+              if row.get("level") == "5" and value and confidence >= 30:
+                  words.append(value)
+          joined = " ".join(words).lower()
+          marker = ("naruto" in joined) or ("ナルト" in joined)
+          print("OCR word count (confidence >= 30):", len(words))
+          print("OCR detected a Naruto marker:", "yes" if marker else "no/uncertain")
+          PY
+              echo "Selected emulator diagnostics:"
+              grep -E "CD-ROM Label|CD-ROM ID|CD-ROM EXE Name|SYSTEM.CNF|EXEC:PC0|Error|ERROR|FATAL|Exception" "$WORK/boot.log" | tail -80 || true
+              tail -40 "$WORK/gui.log" || true
+              kill -TERM "$emu_pid" 2>/dev/null || true
+              wait "$emu_pid" 2>/dev/null || true
+            '
           rc=$?
           set -e
-          echo "Emulator process exit status: $rc"
-          if [ -f "$WORK/boot.log" ]; then
-            grep -E 'SYSTEM.CNF|EXEC:PC0|CD-ROM|CDROM|Error|ERROR|Unknown command for pad|FATAL|Exception' "$WORK/boot.log" | tail -100 || true
-          fi
-          tail -100 "$WORK/gui.log" || true
-          if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
-            echo "::error::Emulator exited early. Inspect log excerpts above."
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Screenshot/OCR boot probe failed with exit code $rc"
             exit "$rc"
           fi
-          echo "Bounded boot attempt completed; this does not independently prove visible title/menu or playable input."
-
+          echo "Screenshot and OCR stayed on the ephemeral runner; no image is uploaded as an artifact."
       - name: Remove private media
         if: always()
         run: |
