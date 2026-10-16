@@ -28,8 +28,8 @@ jobs:
       BIOS_NAME: openbios-chunked.bin
       EXPECTED_ROM_SIZE: "325989552"
       EXPECTED_ROM_SHA256: 58c389a794375b7b81b3a18877ef7965356a1332285a3590170efbf2359a3b88
-      APPIMAGE_URL: https://github.com/pkgforge-dev/PCSX-Redux-AppImage-Enhanced/releases/download/0c3572c3d%402026-10-01_1790876682/PCSX-Redux-0c3572c3d-anylinux-x86_64.AppImage
-      EXPECTED_APPIMAGE_SHA256: c04b3e0a592abbb38bac34fb75551694aaf3a7d4ff18e9fc7b8e2c05bd60fc0c
+      PCSX_HEAD_NAME: PCSX-Redux-HEAD-x86_64.AppImage
+      PCSX_HEAD_EXPECTED_SHA256: 5b2bf850afea345ff1428a38ea75d1776a1857832acf873d9d72d3f4d214b0f8
 
     steps:
       - name: Check required secret
@@ -49,7 +49,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends jq
           WORK="$RUNNER_TEMP/naruto-cpu-trace"
-          mkdir -p "$WORK/anylinux"
+          mkdir -p "$WORK/head"
           echo "WORK=$WORK" >> "$GITHUB_ENV"
           echo "Temporary workspace prepared."
 
@@ -59,11 +59,6 @@ jobs:
         run: |
           set -eu
           cd "$WORK"
-          curl --fail --silent --show-error --location --max-time 120 "$APPIMAGE_URL" -o anylinux.AppImage
-          echo "$EXPECTED_APPIMAGE_SHA256  anylinux.AppImage" | sha256sum --check -
-          chmod +x anylinux.AppImage
-          ( cd "$WORK/anylinux" && ../anylinux.AppImage --appimage-extract >/dev/null && test -x squashfs-root/AppRun )
-
           curl --fail --silent --show-error --location --max-time 30 \
             -H "Authorization: Bearer $NARUTO_RESEARCH_READ_TOKEN" \
             -H "Accept: application/vnd.github+json" \
@@ -82,6 +77,11 @@ jobs:
               -H "Accept: application/octet-stream" \
               "$API/releases/assets/$id" -o "$output"
           }
+          fetch_asset "$PCSX_HEAD_NAME" pcsx-head.AppImage
+          echo "$PCSX_HEAD_EXPECTED_SHA256  pcsx-head.AppImage" | sha256sum --check -
+          chmod +x pcsx-head.AppImage
+          ( cd "$WORK/head" && ../pcsx-head.AppImage --appimage-extract >/dev/null && test -x squashfs-root/AppRun )
+          echo "Upstream HEAD build verified and extracted for the built-in CPU tracing API."
           fetch_asset "$ROM_NAME" game.bin
           fetch_asset "$CUE_NAME" game.cue
           fetch_asset "$BIOS_NAME" openbios-chunked.bin
@@ -145,7 +145,7 @@ jobs:
           set +e
           timeout --signal=TERM --kill-after=5s 35s \
             env HOME="$WORK/home-trace" LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 \
-            "$WORK/anylinux/squashfs-root/AppRun" -no-ui \
+            "$WORK/head/squashfs-root/AppRun" -no-ui \
             -bios "$WORK/openbios-chunked.bin" -iso "$WORK/game-run.cue" \
             -exec "$FULL_SETUP" -run -interpreter -softgpu \
             -stdout -lua_stdout -logfile "$WORK/cpu-trace.log" > "$WORK/cpu-trace.stdout" 2>&1
@@ -175,7 +175,7 @@ jobs:
         run: |
           if [ -n "${WORK:-}" ] && [ -d "$WORK" ]; then
             rm -f "$WORK/game.bin" "$WORK/game.cue" "$WORK/game-run.cue" "$WORK/openbios-chunked.bin" "$WORK/release.json"
-            rm -f "$WORK/anylinux.AppImage" "$WORK/cpu-trace.log" "$WORK/cpu-trace.stdout"
-            rm -rf "$WORK/anylinux" "$WORK/home-trace"
+            rm -f "$WORK/pcsx-head.AppImage" "$WORK/cpu-trace.log" "$WORK/cpu-trace.stdout"
+            rm -rf "$WORK/head" "$WORK/home-trace"
           fi
           echo "Temporary ROM, CUE, BIOS, emulator and trace logs removed from the ephemeral runner."
