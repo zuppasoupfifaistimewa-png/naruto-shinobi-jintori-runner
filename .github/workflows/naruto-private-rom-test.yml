@@ -89,7 +89,7 @@ jobs:
         run: |
           set -eu
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends xvfb xauth libgl1-mesa-dri jq
+          sudo apt-get install -y --no-install-recommends xvfb xauth libgl1-mesa-dri jq imagemagick tesseract-ocr tesseract-ocr-jpn
 
       - name: Download and extract the pinned AnyLinux build
         env:
@@ -224,6 +224,43 @@ jobs:
           }
           run_probe anylinux "$WORK/anylinux/squashfs-root/AppRun"
           run_probe upstream-head "$WORK/head/squashfs-root/AppRun"
+
+          # A separate GUI probe tests rendering after the controller protocol warning is gone.
+          cat > "$WORK/gui_probe.sh" <<'SH'
+          #!/usr/bin/env bash
+          set -eu
+          timeout --signal=TERM --kill-after=4s 35s env \
+            HOME="$GUI_HOME" LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 \
+            "$APP_PATH" -bios "$WORK/openbios-chunked.bin" -iso "$WORK/game-run.cue" \
+            -exec "$PAD_SETUP" -run -interpreter -softgpu -stdout -lua_stdout \
+            -logfile "$WORK/gui-probe.log" > "$WORK/gui-probe.stdout" 2>&1 &
+          emu_pid=$!
+          sleep 10
+          import -window root -silent "$WORK/gui-frame-10.png"
+          sleep 10
+          import -window root -silent "$WORK/gui-frame-20.png"
+          set +e
+          wait "$emu_pid"
+          rc=$?
+          set -e
+          echo "GUI_PROCESS_EXIT=$rc (124 is expected when the 35-second cap is reached)"
+          for frame in "$WORK/gui-frame-10.png" "$WORK/gui-frame-20.png"; do
+            echo "FRAME=$frame"
+            identify -format 'FRAME_METRICS width=%w height=%h mean=%[mean] stddev=%[standard-deviation] colors=%k\n' "$frame"
+            echo "OCR_TEXT_BEGIN"
+            tesseract "$frame" stdout -l jpn+eng 2>/dev/null | head -20 || true
+            echo "OCR_TEXT_END"
+          done
+          echo "GUI boot and pad markers:"
+          grep -E 'PAD_SETUP=|Loaded BIOS:|OpenBIOS detected|CD-ROM Label:|CD-ROM EXE Name:|EXEC:PC0|Execute !|Unknown command for pad|FATAL|Exception|Error|ERROR' "$WORK/gui-probe.stdout" "$WORK/gui-probe.log" 2>/dev/null | tail -50 || true
+          SH
+          chmod +x "$WORK/gui_probe.sh"
+          export WORK GUI_HOME="$WORK/home-gui-anylinux" APP_PATH="$WORK/anylinux/squashfs-root/AppRun" PAD_SETUP
+          mkdir -p "$GUI_HOME"
+          echo "===== GUI PROBE: AnyLinux with private ROM and Port 1 Analog ====="
+          # The screenshots remain inside the ephemeral runner and are removed in cleanup.
+          timeout --signal=TERM --kill-after=5s 50s xvfb-run -a \
+            --server-args="-screen 0 1280x800x24" bash "$WORK/gui_probe.sh"
           echo "Both builds used the same ROM, temporary CUE, OpenBIOS, CPU interpreter and 90-second limit."
           echo "A timeout or EXEC:PC0 marker alone does not prove a visible title screen or playable input."
       - name: Remove private media and both emulator builds
@@ -233,7 +270,7 @@ jobs:
             rm -f "$WORK/game.bin" "$WORK/game.cue" "$WORK/game-run.cue" "$WORK/openbios-chunked.bin" "$WORK/release.json"
             rm -f "$WORK/pcsx-head.AppImage" "$WORK/anylinux.AppImage"
             rm -f "$WORK/boot.log" "$WORK/gui.log" "$WORK/frame.png" "$WORK/ocr.tsv" "$WORK/probe_screen.py"
-            rm -f "$WORK/anylinux.log" "$WORK/anylinux.stdout" "$WORK/upstream-head.log" "$WORK/upstream-head.stdout"
+            rm -f "$WORK/anylinux.log" "$WORK/anylinux.stdout" "$WORK/upstream-head.log" "$WORK/upstream-head.stdout" "$WORK/gui-probe.log" "$WORK/gui-probe.stdout" "$WORK/gui-frame-10.png" "$WORK/gui-frame-20.png" "$WORK/gui_probe.sh"
             rm -rf "$WORK/anylinux" "$WORK/head" "$WORK/home" "$WORK/home-anylinux" "$WORK/home-upstream-head" "$WORK/squashfs-root" "$WORK/profile"
           fi
           echo "Private ROM/BIOS files, profiles, logs and both extracted emulator trees removed from the ephemeral runner."
