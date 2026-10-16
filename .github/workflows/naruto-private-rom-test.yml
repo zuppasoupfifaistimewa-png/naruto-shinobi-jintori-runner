@@ -39,7 +39,7 @@ jobs:
           set -eu
           WORK="$RUNNER_TEMP/naruto-smoke-only"
           mkdir -p "$WORK"
-          echo "$WORK" >> "$GITHUB_ENV"
+          echo "WORK=$WORK" >> "$GITHUB_ENV"
           cd "$WORK"
           curl --fail --location --retry 2 --max-time 120 "$APPIMAGE_URL" -o pcsx-redux.AppImage
           echo "$EXPECTED_SHA256  pcsx-redux.AppImage" | sha256sum --check -
@@ -98,7 +98,7 @@ jobs:
           set -eu
           WORK="$RUNNER_TEMP/naruto-private-boot"
           mkdir -p "$WORK"
-          echo "$WORK" >> "$GITHUB_ENV"
+          echo "WORK=$WORK" >> "$GITHUB_ENV"
           cd "$WORK"
           curl --fail --location --retry 2 --max-time 120 "$APPIMAGE_URL" -o pcsx-redux.AppImage
           echo "$EXPECTED_SHA256  pcsx-redux.AppImage" | sha256sum --check -
