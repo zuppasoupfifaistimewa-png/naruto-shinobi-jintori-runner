@@ -147,16 +147,50 @@ jobs:
           echo "$EXPECTED_ROM_SHA256  game.bin" | sha256sum --check -
           grep -q '^FILE ' game.cue
           grep -q '^TRACK ' game.cue
-          cue_file="$(sed -n 's/^FILE "\(.*\)" .*/\1/p' game.cue | head -n 1)"
-          if [ -z "$cue_file" ]; then
-            cue_file="$(sed -n "s/^FILE '\(.*\)' .*/\1/p" game.cue | head -n 1)"
+          # Keep the uploaded CUE unchanged; normalize only the runner-local copy to the downloaded filename.
+          sed -E 's/^FILE .*/FILE "game.bin" BINARY/' game.cue > game-run.cue
+          grep -q '^FILE "game.bin" BINARY
+
+      - name: Attempt bounded boot with logs
+        run: |
+          set -eu
+          cd "$WORK"
+          mkdir -p profile
+          set +e
+          timeout --signal=TERM --kill-after=5s 90s \
+            xvfb-run -a --server-args="-screen 0 1280x800x24" \
+            env LIBGL_ALWAYS_SOFTWARE=1 squashfs-root/AppRun \
+            -portable "$WORK/profile" \
+            -bios "$WORK/openbios-chunked.bin" \
+            -iso "$WORK/game-run.cue" \
+            -run -interpreter -debugger -stdout -lua_stdout \
+            -logfile "$WORK/boot.log" > "$WORK/gui.log" 2>&1
+          rc=$?
+          set -e
+          echo "Emulator process exit status: $rc"
+          echo "Relevant log markers (if present):"
+          if [ -f "$WORK/boot.log" ]; then
+            grep -E 'SYSTEM.CNF|EXEC:PC0|CD-ROM|CDROM|Error|ERROR|Unknown command for pad|FATAL|Exception' "$WORK/boot.log" | tail -100 || true
           fi
-          if [ -n "$cue_file" ] && [ "$cue_file" != "game.bin" ]; then
-            # Keep the cue's referenced filename valid without editing its contents.
-            ln -s game.bin "$cue_file"
+          tail -100 "$WORK/gui.log" || true
+          if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
+            echo "::error::Emulator exited early. Inspect the log excerpt above."
+            exit "$rc"
           fi
-          echo "ROM size and SHA-256 verified. CUE contains FILE/TRACK entries."
-          echo "BIOS and ROM filenames will not be printed in logs."
+          echo "This step is only a bounded boot attempt. It does not assert that a title screen or playable input was observed."
+
+      - name: Remove private media
+        if: always()
+        run: |
+          if [ -n "${WORK:-}" ] && [ -d "$WORK" ]; then
+            rm -f "$WORK/game.bin" "$WORK/game.cue" "$WORK/game-run.cue" "$WORK/openbios-chunked.bin" "$WORK/release.json"
+            rm -f "$WORK/boot.log" "$WORK/gui.log"
+            rm -rf "$WORK/squashfs-root" "$WORK/profile"
+          fi
+          echo "Private ROM/BIOS files and local logs removed from the ephemeral runner."
+ game-run.cue
+          grep -q '^TRACK ' game-run.cue
+          echo "ROM size and SHA-256 verified. CUE structure verified and local file reference normalized."
 
       - name: Attempt bounded boot with logs
         run: |
