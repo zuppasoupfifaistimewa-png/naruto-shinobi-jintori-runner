@@ -103,7 +103,7 @@ jobs:
           PY
           echo "ROM size and SHA-256 verified."
 
-      - name: Trace guest PC at GPU VSync events
+      - name: Count GPU VSync events without touching CPU registers
         run: |
           set -eu
           cd "$WORK"
@@ -118,15 +118,13 @@ jobs:
           listener = PCSX.Events.createEventListener('GPU::Vsync', function()
             vsyncs = vsyncs + 1
             if vsyncs % 30 == 0 then
-              local regs = PCSX.getRegisters()
-              print(string.format("PC_TRACE frame=%d PC=%08X RA=%08X SP=%08X",
-                vsyncs, tonumber(regs.pc), tonumber(regs.GPR.n.ra), tonumber(regs.GPR.n.sp)))
+              print(string.format("VSYNC_TRACE frame=%d", vsyncs))
             end
             if vsyncs == 600 then
-              print("PC_TRACE_REACHED_600")
+              print("VSYNC_TRACE_REACHED_600")
             end
           end)
-          print("PC_TRACE=listener installed; no self-removal")
+          print("VSYNC_TRACE=counter-only listener installed; no register reads or self-removal")
           LUA
           )
           set +e
@@ -139,13 +137,13 @@ jobs:
           rc=$?
           set -e
           echo "TRACE_PROCESS_EXIT=$rc (124 means the 35-second observation cap was reached)"
-          echo "Selected boot and trace markers:"
-          grep -E 'PAD_SETUP=|PC_TRACE|Loaded BIOS:|OpenBIOS detected|CD-ROM Label:|CD-ROM ID:|CD-ROM EXE Name:|SYSTEM.CNF|BOOT =|\[CHUNK1\] done|EXEC:PC0|Execute !|Unknown command for pad|FATAL|Exception|Error|ERROR' \
+          echo "Selected boot and VSync markers:"
+          grep -E 'PAD_SETUP=|VSYNC_TRACE|Loaded BIOS:|OpenBIOS detected|CD-ROM Label:|CD-ROM ID:|CD-ROM EXE Name:|SYSTEM.CNF|BOOT =|\[CHUNK1\] done|EXEC:PC0|Execute !|Unknown command for pad|FATAL|Exception|Error|ERROR' \
             "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null | tail -160 || true
-          if grep -q 'PC_TRACE frame=' "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null; then
-            echo "TRACE_RESULT=VSync events fired and guest PC samples were recorded."
+          if grep -q 'VSYNC_TRACE frame=' "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null; then
+            echo "TRACE_RESULT=VSync counter callbacks fired."
           else
-            echo "TRACE_RESULT=No PC samples recorded; inspect startup/boot markers before interpreting a guest hang."
+            echo "TRACE_RESULT=No VSync counter samples recorded; inspect startup/boot markers before interpreting a guest hang."
           fi
           if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
             echo "::warning::Trace process exited early with code $rc"
