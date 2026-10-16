@@ -25,15 +25,48 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Explain smoke-only mode
+      - name: Install virtual display dependencies
         run: |
-          echo "Smoke-only mode. The private ROM has not been downloaded."
-          echo "Set run_game=true in a manual workflow dispatch only after the private assets and secret are configured."
+          set -eu
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xvfb xauth libgl1-mesa-dri
 
-      - name: Run emulator smoke workflow
+      - name: Download and verify emulator
+        env:
+          APPIMAGE_URL: https://github.com/pkgforge-dev/PCSX-Redux-AppImage-Enhanced/releases/download/0c3572c3d%402026-10-01_1790876682/PCSX-Redux-0c3572c3d-anylinux-x86_64.AppImage
+          EXPECTED_SHA256: c04b3e0a592abbb38bac34fb75551694aaf3a7d4ff18e9fc7b8e2c05bd60fc0c
         run: |
-          echo "The full emulator smoke test is maintained in pcsx-redux-smoke.yml."
-          echo "See the latest report in docs/SMOKE_TEST_2026-10-16.md."
+          set -eu
+          WORK="$RUNNER_TEMP/naruto-smoke-only"
+          mkdir -p "$WORK"
+          echo "$WORK" >> "$GITHUB_ENV"
+          cd "$WORK"
+          curl --fail --location --retry 2 --max-time 120 "$APPIMAGE_URL" -o pcsx-redux.AppImage
+          echo "$EXPECTED_SHA256  pcsx-redux.AppImage" | sha256sum --check -
+          chmod +x pcsx-redux.AppImage
+          ./pcsx-redux.AppImage --appimage-extract >/dev/null
+          test -x squashfs-root/AppRun
+
+      - name: Launch GUI briefly with no ROM or BIOS
+        run: |
+          set -eu
+          cd "$WORK"
+          set +e
+          timeout --signal=TERM --kill-after=3s 15s \
+            xvfb-run -a --server-args="-screen 0 1280x800x24" \
+            env LIBGL_ALWAYS_SOFTWARE=1 squashfs-root/AppRun > "$WORK/gui.log" 2>&1
+          rc=$?
+          set -e
+          cat "$WORK/gui.log"
+          if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
+            echo "::error::PCSX-Redux exited early with code $rc"
+            exit "$rc"
+          fi
+          echo "GUI smoke test passed; this did not load BIOS or ROM."
+      - name: Clean temporary files
+        if: always()
+        run: |
+          if [ -n "${WORK:-}" ] && [ -d "$WORK" ]; then rm -rf "$WORK"; fi
 
   boot-private-rom:
     if: ${{ inputs.run_game }}
