@@ -124,20 +124,20 @@ jobs:
               print(string.format("PC_TRACE frame=%d PC=%08X RA=%08X SP=%08X",
                 vsyncs, tonumber(regs.pc), tonumber(regs.GPR.n.ra), tonumber(regs.GPR.n.sp)))
             end
-            if vsyncs >= 600 then
-              print(string.format("PC_TRACE_DONE frames=%d", vsyncs))
-              listener:remove()
+            if vsyncs == 600 then
+              print(string.format("PC_TRACE_REACHED_600 frames=%d", vsyncs))
             end
           end)
-          print("PC_TRACE=listener installed")
+          print("PC_TRACE=listener installed; listener remains active until timeout")
           LUA
           )
+          FULL_SETUP=$(printf '%s\\n%s' "$PAD_SETUP" "$TRACE_SETUP")
           set +e
           timeout --signal=TERM --kill-after=5s 35s \
             env HOME="$WORK/home-trace" LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 \
             "$WORK/anylinux/squashfs-root/AppRun" -no-ui \
             -bios "$WORK/openbios-chunked.bin" -iso "$WORK/game-run.cue" \
-            -exec "$PAD_SETUP" -exec "$TRACE_SETUP" -run -interpreter -softgpu \
+            -exec "$FULL_SETUP" -run -interpreter -softgpu \
             -stdout -lua_stdout -logfile "$WORK/cpu-trace.log" > "$WORK/cpu-trace.stdout" 2>&1
           rc=$?
           set -e
