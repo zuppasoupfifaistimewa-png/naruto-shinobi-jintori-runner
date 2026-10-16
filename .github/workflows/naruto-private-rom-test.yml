@@ -91,22 +91,21 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends xvfb xauth libgl1-mesa-dri jq
 
-      - name: Download and verify public emulator
+      - name: Download and extract the pinned AnyLinux build
         env:
           APPIMAGE_URL: https://github.com/pkgforge-dev/PCSX-Redux-AppImage-Enhanced/releases/download/0c3572c3d%402026-10-01_1790876682/PCSX-Redux-0c3572c3d-anylinux-x86_64.AppImage
           EXPECTED_SHA256: c04b3e0a592abbb38bac34fb75551694aaf3a7d4ff18e9fc7b8e2c05bd60fc0c
         run: |
           set -eu
           WORK="$RUNNER_TEMP/naruto-private-boot"
-          mkdir -p "$WORK"
+          mkdir -p "$WORK/anylinux"
           echo "WORK=$WORK" >> "$GITHUB_ENV"
           cd "$WORK"
-          curl --fail --location --retry 2 --max-time 120 "$APPIMAGE_URL" -o pcsx-redux.AppImage
-          echo "$EXPECTED_SHA256  pcsx-redux.AppImage" | sha256sum --check -
-          chmod +x pcsx-redux.AppImage
-          ./pcsx-redux.AppImage --appimage-extract >/dev/null
-          test -x squashfs-root/AppRun
-
+          curl --fail --location --retry 2 --max-time 120 "$APPIMAGE_URL" -o anylinux.AppImage
+          echo "$EXPECTED_SHA256  anylinux.AppImage" | sha256sum --check -
+          chmod +x anylinux.AppImage
+          ( cd "$WORK/anylinux" && ../anylinux.AppImage --appimage-extract >/dev/null && test -x squashfs-root/AppRun )
+          echo "AnyLinux build extracted successfully; SHA-256 was verified."
       - name: Download exact ROM, CUE and diagnostic BIOS from private release
         env:
           NARUTO_RESEARCH_READ_TOKEN: ${{ secrets.NARUTO_RESEARCH_READ_TOKEN }}
@@ -115,6 +114,7 @@ jobs:
           ROM_NAME: Naruto.-.Shinobi.no.Sato.no.Jintori.Gassen.Japan.bin
           CUE_NAME: Naruto.-.Shinobi.no.Sato.no.Jintori.Gassen.Japan.cue
           BIOS_NAME: openbios-chunked.bin
+          PCSX_HEAD_NAME: PCSX-Redux-HEAD-x86_64.AppImage
           EXPECTED_ROM_SHA256: 58c389a794375b7b81b3a18877ef7965356a1332285a3590170efbf2359a3b88
           EXPECTED_ROM_SIZE: "325989552"
         run: |
@@ -143,6 +143,13 @@ jobs:
           fetch_asset "$ROM_NAME" game.bin
           fetch_asset "$CUE_NAME" game.cue
           fetch_asset "$BIOS_NAME" openbios-chunked.bin
+          fetch_asset "$PCSX_HEAD_NAME" pcsx-head.AppImage
+          chmod +x pcsx-head.AppImage
+          mkdir -p "$WORK/head"
+          ( cd "$WORK/head" && ../pcsx-head.AppImage --appimage-extract >/dev/null && test -x squashfs-root/AppRun )
+          echo "Upstream HEAD AppImage size and SHA-256 (for build comparison):"
+          stat -c '%n %s bytes' pcsx-head.AppImage
+          sha256sum pcsx-head.AppImage
 
           test "$(stat -c '%s' game.bin)" = "$EXPECTED_ROM_SIZE"
           echo "$EXPECTED_ROM_SHA256  game.bin" | sha256sum --check -
@@ -161,43 +168,53 @@ jobs:
           PY
           echo "ROM size and SHA-256 verified; source CUE is unchanged."
 
-      - name: Run bounded headless boot probe and inspect logs
+      - name: Compare AnyLinux and upstream HEAD using the same private ROM
         run: |
           set -eu
           cd "$WORK"
-          mkdir -p home
-          set +e
-          timeout --signal=TERM --kill-after=5s 90s \
-            env HOME="$WORK/home" LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 \
-            "$WORK/squashfs-root/AppRun" \
-              -no-ui -bios "$WORK/openbios-chunked.bin" -iso "$WORK/game-run.cue" \
-              -run -interpreter -softgpu -stdout -lua_stdout \
-              -logfile "$WORK/headless.log" > "$WORK/headless.stdout" 2>&1
-          rc=$?
-          set -e
-          echo "Headless process exit status: $rc (124 means the 25-second bound was reached)"
-          cat "$WORK/headless.stdout" | tail -200 || true
-          if [ -f "$WORK/headless.log" ]; then
-            echo "Selected BIOS/CD-ROM/executable markers:"
-            grep -E "CD-ROM Label|CD-ROM ID|CD-ROM EXE Name|SYSTEM.CNF|EXEC:PC0|exec|EXEC|MIPS|Error|ERROR|FATAL|Exception" "$WORK/headless.log" | tail -120 || true
-          fi
-          if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
-            echo "::error::Headless PCSX-Redux exited early with code $rc"
-            exit "$rc"
-          fi
-          if grep -E "CD-ROM EXE Name: SLPS_035.53|SYSTEM.CNF" "$WORK/headless.stdout" "$WORK/headless.log" >/dev/null 2>&1; then
-            echo "RESULT: disc metadata was recognized in the bounded headless run."
-          else
-            echo "RESULT: no expected disc/executable marker found in the captured logs."
-          fi
-          echo "This probe cannot prove a visible title screen or working input.";
-
-      - name: Remove private media
+          run_probe() {
+            name="$1"
+            app="$2"
+            home="$WORK/home-$name"
+            mkdir -p "$home"
+            echo "===== BUILD: $name ====="
+            set +e
+            timeout --signal=TERM --kill-after=5s 90s \
+              env HOME="$home" LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 \
+              "$app" -no-ui -bios "$WORK/openbios-chunked.bin" -iso "$WORK/game-run.cue" \
+              -run -interpreter -softgpu -stdout -lua_stdout -logfile "$WORK/$name.log" \
+              > "$WORK/$name.stdout" 2>&1
+            rc=$?
+            set -e
+            echo "PROCESS_EXIT=$rc (124 means the 90-second limit was reached)"
+            echo "Relevant startup, executable and controller markers:"
+            grep -E 'Loaded BIOS:|OpenBIOS detected|CD-ROM Label:|CD-ROM ID:|CD-ROM EXE Name:|SYSTEM.CNF|BOOT =|\[CHUNK1\] done|EXEC:PC0|Execute !|Unknown command for pad|FATAL|Exception|Error|ERROR' "$WORK/$name.stdout" "$WORK/$name.log" 2>/dev/null | tail -100 || true
+            if grep -q 'EXEC:PC0' "$WORK/$name.stdout" "$WORK/$name.log" 2>/dev/null; then
+              echo "BOOT_RESULT=$name reached EXEC:PC0 (game executable entered)."
+            else
+              echo "BOOT_RESULT=$name did not record EXEC:PC0 within the bound."
+            fi
+            if grep -q 'Unknown command for pad: 43' "$WORK/$name.stdout" "$WORK/$name.log" 2>/dev/null; then
+              echo "PAD_RESULT=$name logged unrecognized controller command 0x43."
+            else
+              echo "PAD_RESULT=$name did not log unknown controller command 0x43."
+            fi
+            if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
+              echo "::warning::Build $name exited early with code $rc"
+            fi
+          }
+          run_probe anylinux "$WORK/anylinux/squashfs-root/AppRun"
+          run_probe upstream-head "$WORK/head/squashfs-root/AppRun"
+          echo "Both builds used the same ROM, temporary CUE, OpenBIOS, CPU interpreter and 90-second limit."
+          echo "A timeout or EXEC:PC0 marker alone does not prove a visible title screen or playable input."
+      - name: Remove private media and both emulator builds
         if: always()
         run: |
           if [ -n "${WORK:-}" ] && [ -d "$WORK" ]; then
             rm -f "$WORK/game.bin" "$WORK/game.cue" "$WORK/game-run.cue" "$WORK/openbios-chunked.bin" "$WORK/release.json"
-            rm -f "$WORK/boot.log" "$WORK/gui.log" "$WORK/frame.png" "$WORK/ocr.tsv" "$WORK/probe_screen.py" "$WORK/headless.log" "$WORK/headless.stdout"
-            rm -rf "$WORK/squashfs-root" "$WORK/profile"
+            rm -f "$WORK/pcsx-head.AppImage" "$WORK/anylinux.AppImage"
+            rm -f "$WORK/boot.log" "$WORK/gui.log" "$WORK/frame.png" "$WORK/ocr.tsv" "$WORK/probe_screen.py"
+            rm -f "$WORK/anylinux.log" "$WORK/anylinux.stdout" "$WORK/upstream-head.log" "$WORK/upstream-head.stdout"
+            rm -rf "$WORK/anylinux" "$WORK/head" "$WORK/home" "$WORK/home-anylinux" "$WORK/home-upstream-head" "$WORK/squashfs-root" "$WORK/profile"
           fi
-          echo "Private ROM/BIOS files and local logs removed from the ephemeral runner."
+          echo "Private ROM/BIOS files, profiles, logs and both extracted emulator trees removed from the ephemeral runner."
