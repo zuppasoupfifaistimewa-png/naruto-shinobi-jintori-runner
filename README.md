@@ -24,3 +24,8 @@ Latest result: [2026-10-16 smoke-test report](docs/SMOKE_TEST_2026-10-16.md). Th
 ## Usage and limits
 
 Standard GitHub-hosted runners are free for public repositories, subject to GitHub's technical limits and policies. Each smoke-test job is capped at five minutes to keep its footprint small. See [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) and [runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+
+
+## Secure private ROM test
+
+Setup guide: [docs/PRIVATE_ROM_SETUP.md](docs/PRIVATE_ROM_SETUP.md). The private release asset upload and `NARUTO_RESEARCH_READ_TOKEN` secret still require setup in GitHub's web UI. The workflow defaults to a safe smoke-only mode and downloads no private ROM unless manually dispatched with `run_game=true`.
