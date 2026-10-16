@@ -146,13 +146,20 @@ jobs:
 
           test "$(stat -c '%s' game.bin)" = "$EXPECTED_ROM_SIZE"
           echo "$EXPECTED_ROM_SHA256  game.bin" | sha256sum --check -
-          grep -q '^FILE ' game.cue
-          grep -q '^TRACK ' game.cue
-          # Keep uploaded CUE unchanged; normalize only this ephemeral local copy.
-          sed -E 's/^FILE .*/FILE "game.bin" BINARY/' game.cue > game-run.cue
-          grep -q '^FILE "game.bin" BINARY$' game-run.cue
-          grep -q '^TRACK ' game-run.cue
-          echo "ROM size and SHA-256 verified. CUE structure verified and its local file reference normalized."
+          python3 - <<'PY'
+          from pathlib import Path
+          raw = Path("game.cue").read_bytes()
+          cue = raw.decode("utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
+          lines = cue.splitlines()
+          file_indices = [i for i, line in enumerate(lines) if line.lstrip().upper().startswith("FILE ")]
+          has_track = any(line.lstrip().upper().startswith("TRACK ") for line in lines)
+          if len(file_indices) != 1 or not has_track:
+              raise SystemExit("CUE structure invalid: expected exactly one FILE directive and at least one TRACK directive.")
+          lines[file_indices[0]] = 'FILE "game.bin" BINARY'
+          Path("game-run.cue").write_text("\n".join(lines) + "\n", encoding="ascii")
+          print("CUE structure verified; normalized only the temporary FILE reference.")
+          PY
+          echo "ROM size and SHA-256 verified; source CUE is unchanged."
 
       - name: Attempt bounded boot with logs
         run: |
