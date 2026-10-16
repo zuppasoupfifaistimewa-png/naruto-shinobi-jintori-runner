@@ -107,31 +107,28 @@ jobs:
         run: |
           set -eu
           cd "$WORK"
-          PAD_SETUP=$(cat <<'LUA'
+          FULL_SETUP=$(cat <<'LUA'
           PCSX.settings.pads[1].DeviceType = 'Analog'
           PCSX.settings.pads[1].Connected = true
           PCSX.SIO0.slots[1].pads[1].map()
           print("PAD_SETUP=port1 analog device connected and remapped")
-          LUA
-          )
-          TRACE_SETUP=$(cat <<'LUA'
-          local regs = PCSX.getRegisters()
+
           local vsyncs = 0
           local listener
           listener = PCSX.Events.createEventListener('GPU::Vsync', function()
             vsyncs = vsyncs + 1
             if vsyncs % 30 == 0 then
+              local regs = PCSX.getRegisters()
               print(string.format("PC_TRACE frame=%d PC=%08X RA=%08X SP=%08X",
                 vsyncs, tonumber(regs.pc), tonumber(regs.GPR.n.ra), tonumber(regs.GPR.n.sp)))
             end
             if vsyncs == 600 then
-              print(string.format("PC_TRACE_REACHED_600 frames=%d", vsyncs))
+              print("PC_TRACE_REACHED_600")
             end
           end)
-          print("PC_TRACE=listener installed; listener remains active until timeout")
+          print("PC_TRACE=listener installed; no self-removal")
           LUA
           )
-          FULL_SETUP=$(printf '%s\\n%s' "$PAD_SETUP" "$TRACE_SETUP")
           set +e
           timeout --signal=TERM --kill-after=5s 35s \
             env HOME="$WORK/home-trace" LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 \
