@@ -161,12 +161,50 @@ jobs:
           PY
           echo "ROM size and SHA-256 verified; source CUE is unchanged."
 
-      - name: Capture a private on-runner screen and summarize OCR
+      - name: Capture emulator window and summarize OCR privately
         run: |
           set -eu
-          sudo apt-get install -y --no-install-recommends imagemagick tesseract-ocr tesseract-ocr-jpn
+          sudo apt-get install -y --no-install-recommends imagemagick tesseract-ocr tesseract-ocr-jpn x11-utils
           cd "$WORK"
-          mkdir -p profile
+          cat > "$WORK/probe_screen.py" <<'PY'
+          import csv, re, subprocess, sys
+          from pathlib import Path
+
+          screen = sys.argv[1]
+          tsv_base = sys.argv[2]
+          tree = subprocess.run(["xwininfo", "-root", "-tree"], check=True, capture_output=True, text=True).stdout
+          win_id = None
+          for line in tree.splitlines():
+              if re.search(r'"[^"]*pcsx', line, flags=re.IGNORECASE):
+                  match = re.match(r'\s*(0x[0-9a-fA-F]+)', line)
+                  if match:
+                      win_id = match.group(1)
+                      break
+          if not win_id:
+              print("No PCSX-named X11 window found; no game-screen claim can be made.")
+              print("Visible top-level window titles:", [re.findall(r'"([^"]*)"', line)[:1] for line in tree.splitlines() if '"' in line][:12])
+              raise SystemExit(1)
+          subprocess.run(["import", "-window", win_id, screen], check=True)
+          stats = subprocess.run(["identify", "-format", "%w %h %[fx:mean] %[fx:standard_deviation]", screen], check=True, capture_output=True, text=True).stdout
+          print("PCSX window capture (width height mean stddev):", stats)
+          subprocess.run(["tesseract", screen, tsv_base, "-l", "jpn+eng", "tsv"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+          tsv_path = tsv_base + ".tsv"
+          with open(tsv_path, newline="", encoding="utf-8") as fh:
+              rows = list(csv.DictReader(fh, delimiter=chr(9)))
+          words = []
+          for row in rows:
+              value = (row.get("text") or "").strip()
+              try:
+                  confidence = float(row.get("conf", "-1"))
+              except ValueError:
+                  confidence = -1
+              if row.get("level") == "5" and value and confidence >= 30:
+                  words.append(value)
+          joined = " ".join(words).lower()
+          marker = ("naruto" in joined) or ("ナルト" in joined)
+          print("OCR word count (confidence >= 30):", len(words))
+          print("OCR detected a Naruto marker:", "yes" if marker else "no/uncertain")
+          PY
           set +e
           timeout --signal=TERM --kill-after=5s 50s \
             xvfb-run -a --server-args="-screen 0 1280x800x24" \
@@ -185,28 +223,7 @@ jobs:
                 tail -80 "$WORK/gui.log" || true
                 exit 1
               fi
-              import -window root "$WORK/frame.png"
-              identify -format "Captured screen: %wx%h; mean=%[fx:mean]; stddev=%[fx:standard_deviation]\\n" "$WORK/frame.png"
-              tesseract "$WORK/frame.png" "$WORK/ocr" -l jpn+eng tsv 2>/dev/null
-              python3 - "$WORK/ocr.tsv" <<'"'"'PY'"'"'
-          import csv, sys
-          from pathlib import Path
-          with open(sys.argv[1], newline="", encoding="utf-8") as fh:
-              rows = list(csv.DictReader(fh, delimiter="\\t"))
-          words = []
-          for row in rows:
-              value = (row.get("text") or "").strip()
-              try:
-                  confidence = float(row.get("conf", "-1"))
-              except ValueError:
-                  confidence = -1
-              if row.get("level") == "5" and value and confidence >= 30:
-                  words.append(value)
-          joined = " ".join(words).lower()
-          marker = ("naruto" in joined) or ("ナルト" in joined)
-          print("OCR word count (confidence >= 30):", len(words))
-          print("OCR detected a Naruto marker:", "yes" if marker else "no/uncertain")
-          PY
+              python3 "$WORK/probe_screen.py" "$WORK/frame.png" "$WORK/ocr"
               echo "Selected emulator diagnostics:"
               grep -E "CD-ROM Label|CD-ROM ID|CD-ROM EXE Name|SYSTEM.CNF|EXEC:PC0|Error|ERROR|FATAL|Exception" "$WORK/boot.log" | tail -80 || true
               tail -40 "$WORK/gui.log" || true
@@ -219,13 +236,13 @@ jobs:
             echo "::error::Screenshot/OCR boot probe failed with exit code $rc"
             exit "$rc"
           fi
-          echo "Screenshot and OCR stayed on the ephemeral runner; no image is uploaded as an artifact."
+          echo "Screen capture and OCR remain on the ephemeral runner; no image artifact is uploaded."
       - name: Remove private media
         if: always()
         run: |
           if [ -n "${WORK:-}" ] && [ -d "$WORK" ]; then
             rm -f "$WORK/game.bin" "$WORK/game.cue" "$WORK/game-run.cue" "$WORK/openbios-chunked.bin" "$WORK/release.json"
-            rm -f "$WORK/boot.log" "$WORK/gui.log"
+            rm -f "$WORK/boot.log" "$WORK/gui.log" "$WORK/frame.png" "$WORK/ocr.tsv" "$WORK/probe_screen.py"
             rm -rf "$WORK/squashfs-root" "$WORK/profile"
           fi
           echo "Private ROM/BIOS files and local logs removed from the ephemeral runner."
