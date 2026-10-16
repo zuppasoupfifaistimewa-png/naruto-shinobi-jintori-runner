@@ -174,23 +174,32 @@ jobs:
         run: |
           set -eu
           cd "$WORK"
+          # Match PCSX-Redux's own Analog-pad setup: setting the type alone is not enough;
+          # it is cached at map() time, so connect and remap after setting it.
+          PAD_SETUP=$(cat <<'LUA'
+PCSX.settings.pads[1].DeviceType = 'Analog'
+PCSX.settings.pads[1].Connected = true
+PCSX.SIO0.slots[1].pads[1].map()
+print("PAD_SETUP=port1 analog device connected and remapped")
+LUA
+          )
           run_probe() {
             name="$1"
             app="$2"
             home="$WORK/home-$name"
             mkdir -p "$home"
-            echo "===== BUILD: $name ====="
+            echo "===== BUILD: $name (Port 1 forced Analog) ====="
             set +e
             timeout --signal=TERM --kill-after=5s 90s \
               env HOME="$home" LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 \
               "$app" -no-ui -bios "$WORK/openbios-chunked.bin" -iso "$WORK/game-run.cue" \
-              -run -interpreter -softgpu -stdout -lua_stdout -logfile "$WORK/$name.log" \
+              -exec "$PAD_SETUP" -run -interpreter -softgpu -stdout -lua_stdout -logfile "$WORK/$name.log" \
               > "$WORK/$name.stdout" 2>&1
             rc=$?
             set -e
             echo "PROCESS_EXIT=$rc (124 means the 90-second limit was reached)"
             echo "Relevant startup, executable and controller markers:"
-            grep -E 'Loaded BIOS:|OpenBIOS detected|CD-ROM Label:|CD-ROM ID:|CD-ROM EXE Name:|SYSTEM.CNF|BOOT =|\[CHUNK1\] done|EXEC:PC0|Execute !|Unknown command for pad|FATAL|Exception|Error|ERROR' "$WORK/$name.stdout" "$WORK/$name.log" 2>/dev/null | tail -100 || true
+            grep -E 'PAD_SETUP=|Loaded BIOS:|OpenBIOS detected|CD-ROM Label:|CD-ROM ID:|CD-ROM EXE Name:|SYSTEM.CNF|BOOT =|\[CHUNK1\] done|EXEC:PC0|Execute !|Unknown command for pad|FATAL|Exception|Error|ERROR' "$WORK/$name.stdout" "$WORK/$name.log" 2>/dev/null | tail -100 || true
             if grep -q 'EXEC:PC0' "$WORK/$name.stdout" "$WORK/$name.log" 2>/dev/null; then
               echo "BOOT_RESULT=$name reached EXEC:PC0 (game executable entered)."
             else
