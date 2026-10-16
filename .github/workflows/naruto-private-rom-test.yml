@@ -212,8 +212,7 @@ jobs:
               set -eu
               echo "GLX software-renderer details:"
               LIBGL_ALWAYS_SOFTWARE=1 glxinfo -B || true
-              env LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 "$WORK/squashfs-root/AppRun" \
-                -portable "$WORK/profile" \
+              env HOME="$WORK/home" LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 "$WORK/squashfs-root/AppRun" \
                 -bios "$WORK/openbios-chunked.bin" \
                 -iso "$WORK/game-run.cue" \
                 -run -interpreter -softgpu -stdout -lua_stdout \
