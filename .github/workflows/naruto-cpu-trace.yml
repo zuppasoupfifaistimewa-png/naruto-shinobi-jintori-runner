@@ -103,7 +103,7 @@ jobs:
           PY
           echo "ROM size and SHA-256 verified."
 
-      - name: Sample CPU PC sparsely alongside GPU VSync counters
+      - name: Capture a short built-in CPU trace around executable entry
         run: |
           set -eu
           cd "$WORK"
@@ -113,24 +113,33 @@ jobs:
           PCSX.SIO0.slots[1].pads[1].map()
           print("PAD_SETUP=port1 analog device connected and remapped")
 
-          -- Follow the upstream test pattern: acquire the register view before callbacks.
-          local regs = PCSX.getRegisters()
           local vsyncs = 0
+          local traceStart = 1620
+          local traceStop = 1680
+          PCSX.CPU.Trace.clear()
+          PCSX.CPU.Trace.disable()
           local listener
           listener = PCSX.Events.createEventListener('GPU::Vsync', function()
             vsyncs = vsyncs + 1
             if vsyncs % 30 == 0 then
               print(string.format("VSYNC_TRACE frame=%d", vsyncs))
             end
-            if vsyncs % 120 == 0 then
-              local pc = tonumber(regs.pc)
-              print("PC_TRACE frame=" .. tostring(vsyncs) .. " pc_decimal=" .. tostring(pc))
-            end
-            if vsyncs == 600 then
-              print("VSYNC_TRACE_REACHED_600")
+            if vsyncs == traceStart then
+              PCSX.CPU.Trace.clear()
+              PCSX.CPU.Trace.enable()
+              print("CPU_TRACE_WINDOW=enabled frame=" .. tostring(vsyncs))
+            elseif vsyncs == traceStop then
+              PCSX.CPU.Trace.disable()
+              local total = PCSX.CPU.Trace.size()
+              print("CPU_TRACE_SIZE=" .. tostring(total))
+              local first = math.max(0, total - 80)
+              for i = first, total - 1 do
+                print("CPU_TRACE_LINE index=" .. tostring(i) .. " " .. PCSX.CPU.Trace.getLine(i))
+              end
+              print("CPU_TRACE_WINDOW=disabled and last 80 records printed")
             end
           end)
-          print("VSYNC_TRACE=listener installed; PC read every 120 callbacks from pre-acquired register view")
+          print("VSYNC_TRACE=counter listener installed; built-in CPU trace scheduled for frames 1620-1680")
           LUA
           )
           set +e
@@ -143,18 +152,18 @@ jobs:
           rc=$?
           set -e
           echo "TRACE_PROCESS_EXIT=$rc (124 means the 35-second observation cap was reached)"
-          echo "Selected boot, VSync and PC markers:"
-          grep -E 'PAD_SETUP=|VSYNC_TRACE|PC_TRACE|Loaded BIOS:|OpenBIOS detected|CD-ROM Label:|CD-ROM ID:|CD-ROM EXE Name:|SYSTEM.CNF|BOOT =|\[CHUNK1\] done|EXEC:PC0|Execute !|Unknown command for pad|FATAL|Exception|Error|ERROR' \
+          echo "Selected boot, VSync and instruction-trace markers:"
+          grep -E 'PAD_SETUP=|VSYNC_TRACE|CPU_TRACE|Loaded BIOS:|OpenBIOS detected|CD-ROM Label:|CD-ROM ID:|CD-ROM EXE Name:|SYSTEM.CNF|BOOT =|\[CHUNK1\] done|EXEC:PC0|Execute !|Unknown command for pad|FATAL|Exception|Error|ERROR' \
             "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null | tail -160 || true
           if grep -q 'VSYNC_TRACE frame=' "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null; then
             echo "TRACE_RESULT=VSync counter callbacks fired."
           else
             echo "TRACE_RESULT=No VSync counter samples recorded; inspect startup/boot markers before interpreting a guest hang."
           fi
-          if grep -q 'PC_TRACE frame=' "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null; then
-            echo "PC_TRACE_RESULT=Sparse PC samples recorded."
+          if grep -q 'CPU_TRACE_LINE index=' "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null; then
+            echo "CPU_TRACE_RESULT=Built-in instruction records were printed."
           else
-            echo "PC_TRACE_RESULT=No PC samples recorded."
+            echo "CPU_TRACE_RESULT=No built-in instruction records were printed."
           fi
           if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
             echo "::warning::Trace process exited early with code $rc"
