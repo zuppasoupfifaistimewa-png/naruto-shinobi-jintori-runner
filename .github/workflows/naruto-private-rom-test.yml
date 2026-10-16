@@ -111,8 +111,8 @@ jobs:
           NARUTO_RESEARCH_READ_TOKEN: ${{ secrets.NARUTO_RESEARCH_READ_TOKEN }}
           RESEARCH_REPO: zuppasoupfifaistimewa-png/naruto-shinobi-jintori-research
           RELEASE_TAG: research-emulator-pcsx-redux-2026-10-15
-          ROM_NAME: Naruto - Shinobi no Sato no Jintori Gassen (Japan).bin
-          CUE_NAME: naruto-shinobi-jintori.cue
+          ROM_NAME: Naruto.-.Shinobi.no.Sato.no.Jintori.Gassen.Japan.bin
+          CUE_NAME: Naruto.-.Shinobi.no.Sato.no.Jintori.Gassen.Japan.cue
           BIOS_NAME: openbios-chunked.bin
           EXPECTED_ROM_SHA256: 58c389a794375b7b81b3a18877ef7965356a1332285a3590170efbf2359a3b88
           EXPECTED_ROM_SIZE: "325989552"
