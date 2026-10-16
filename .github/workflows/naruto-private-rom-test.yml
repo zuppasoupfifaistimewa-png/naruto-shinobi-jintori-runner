@@ -201,6 +201,14 @@ jobs:
             fi
             if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
               echo "::warning::Build $name exited early with code $rc"
+              echo "Full captured stdout/stderr for early exit:"
+              tail -120 "$WORK/$name.stdout" || true
+              target="$(readlink -f "$app" || true)"
+              echo "Resolved AppRun target: $target"
+              if [ -n "$target" ] && [ -f "$target" ]; then
+                file "$target" || true
+                ldd "$target" 2>&1 | grep -E 'not found|statically linked|not a dynamic executable' || true
+              fi
             fi
           }
           run_probe anylinux "$WORK/anylinux/squashfs-root/AppRun"
