@@ -1,0 +1,38 @@
+# Local ROMs and disc images — never commit game media to the public runner repo
+*.bin
+*.cue
+*.iso
+*.chd
+*.pbp
+
+# BIOS/firmware files
+/bios/
+/BIOS/
+/firmware/
+*BIOS*.bin
+*bios*.bin
+
+# Emulator state, dumps, and local outputs
+*.mcr
+*.mcd
+*.srm
+*.sav
+*.state
+*.state.*
+*.dump
+*.mem
+*.ram
+*.log
+*.png
+*.jpg
+/captures/
+/screenshots/
+/logs/
+/tmp/
+
+# Local runner settings and credentials
+.env
+.env.*
+*.token
+*.secret
+config.local.*
