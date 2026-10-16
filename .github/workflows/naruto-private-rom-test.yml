@@ -71,7 +71,7 @@ jobs:
 
   boot-private-rom:
     if: ${{ inputs.run_game || github.event.head_commit.message == 'Run private ROM boot test' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Check required secret
