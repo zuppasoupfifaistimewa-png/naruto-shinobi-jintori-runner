@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   smoke:
-    if: ${{ !inputs.run_game && !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Run private ROM boot test')) }}
+    if: ${{ !inputs.run_game && github.event.head_commit.message != 'Run private ROM boot test - normalize CUE path' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -69,7 +69,7 @@ jobs:
           if [ -n "${WORK:-}" ] && [ -d "$WORK" ]; then rm -rf "$WORK"; fi
 
   boot-private-rom:
-    if: ${{ inputs.run_game || (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'Run private ROM boot test')) }}
+    if: ${{ inputs.run_game || github.event.head_commit.message == 'Run private ROM boot test - normalize CUE path' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
