@@ -1,0 +1,85 @@
+name: PCSX-Redux runner smoke test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/pcsx-redux-smoke.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pcsx-redux-smoke
+  cancel-in-progress: true
+
+jobs:
+  linux-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report runner environment
+        run: |
+          set -eu
+          echo "Runner OS and architecture"
+          uname -a
+          uname -m
+          cat /etc/os-release
+          echo "glibc:"
+          ldd --version | head -n 1
+          df -h .
+
+      - name: Install virtual display dependencies
+        run: |
+          set -eu
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xvfb xauth libgl1-mesa-dri mesa-utils
+
+      - name: Download and verify pinned public PCSX-Redux build
+        env:
+          APPIMAGE_URL: https://github.com/pkgforge-dev/PCSX-Redux-AppImage-Enhanced/releases/download/0c3572c3d%402026-10-01_1790876682/PCSX-Redux-0c3572c3d-anylinux-x86_64.AppImage
+          EXPECTED_SHA256: c04b3e0a592abbb38bac34fb75551694aaf3a7d4ff18e9fc7b8e2c05bd60fc0c
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/pcsx-smoke"
+          cd "$RUNNER_TEMP/pcsx-smoke"
+          curl --fail --location --retry 2 --max-time 120 "$APPIMAGE_URL" --output pcsx-redux.AppImage
+          echo "$EXPECTED_SHA256  pcsx-redux.AppImage" | sha256sum --check -
+          chmod +x pcsx-redux.AppImage
+          file pcsx-redux.AppImage
+          ls -lh pcsx-redux.AppImage
+
+      - name: Extract AppImage without FUSE
+        run: |
+          set -eu
+          cd "$RUNNER_TEMP/pcsx-smoke"
+          ./pcsx-redux.AppImage --appimage-extract
+          test -x squashfs-root/AppRun
+          echo "AppImage extraction passed."
+          file squashfs-root/AppRun
+
+      - name: Attempt short GUI launch under Xvfb
+        run: |
+          set -eu
+          cd "$RUNNER_TEMP/pcsx-smoke"
+          set +e
+          timeout --signal=TERM --kill-after=3s 15s \
+            xvfb-run -a --server-args="-screen 0 1280x800x24" \
+            env LIBGL_ALWAYS_SOFTWARE=1 ./squashfs-root/AppRun \
+            > "$RUNNER_TEMP/pcsx-smoke/pcsx-gui.log" 2>&1
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/pcsx-smoke/pcsx-gui.log"
+          if [ "$rc" -eq 124 ]; then
+            echo "PCSX-Redux remained running until the 15-second smoke-test timeout."
+          elif [ "$rc" -eq 0 ]; then
+            echo "PCSX-Redux exited normally during the smoke test."
+          else
+            echo "PCSX-Redux exited with code $rc."
+            exit "$rc"
+          fi
+
+      - name: State test boundary
+        run: |
+          echo "PASS means package extraction and a short GUI launch were tested."
+          echo "This workflow does not load a BIOS or game ROM and does not prove Naruto boot/gameplay compatibility."
