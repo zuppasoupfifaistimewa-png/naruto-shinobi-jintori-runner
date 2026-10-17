@@ -183,6 +183,7 @@ jobs:
           print("PAD_SETUP=port1 analog device connected and remapped")
           LUA
           )
+          export PAD_SETUP
           run_probe() {
             name="$1"
             app="$2"
