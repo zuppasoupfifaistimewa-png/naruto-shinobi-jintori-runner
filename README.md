@@ -19,7 +19,7 @@ Open **Actions → PCSX-Redux runner smoke test → Run workflow**, or push a ch
 4. Extracts the AppImage without mounting through FUSE.
 5. Attempts a short GUI launch using Xvfb and software rendering; logs are available in the Actions job.
 
-Latest result: [2026-10-16 smoke-test report](docs/SMOKE_TEST_2026-10-16.md). This does not load the Naruto ROM because the ROM is not stored in this public repository. A separate secure ROM-provisioning path is still required for end-to-end game testing.
+Latest generic smoke-test report: [2026-10-16 smoke-test report](docs/SMOKE_TEST_2026-10-16.md). That smoke test intentionally does not load the ROM. End-to-end testing is handled separately by the secure private-release workflow documented in [docs/PRIVATE_ROM_SETUP.md](docs/PRIVATE_ROM_SETUP.md); the ROM remains outside this public repository.
 
 ## Usage and limits
 
