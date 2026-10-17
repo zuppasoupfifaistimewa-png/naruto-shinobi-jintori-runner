@@ -89,7 +89,7 @@ jobs:
         run: |
           set -eu
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends xvfb xauth libgl1-mesa-dri jq imagemagick tesseract-ocr tesseract-ocr-jpn
+          sudo apt-get install -y --no-install-recommends xvfb xauth libgl1-mesa-dri jq imagemagick tesseract-ocr tesseract-ocr-jpn xdotool x11-utils
 
       - name: Download and extract the pinned AnyLinux build
         env:
@@ -235,12 +235,28 @@ jobs:
             -exec "$PAD_SETUP" -run -interpreter -softgpu -stdout -lua_stdout \
             -logfile "$WORK/gui-probe.log" > "$WORK/gui-probe.stdout" 2>&1 &
           emu_pid=$!
+          capture_emulator_window() {
+            label="$1"
+            output="$2"
+            xwininfo -root -tree > "$WORK/window-tree.txt" 2>&1 || true
+            window_id="$(xdotool search --onlyvisible --name 'PCSX-Redux|PCSX|pcsx|Redux|redux' 2>/dev/null | head -n 1 || true)"
+            if [ -z "$window_id" ]; then
+              window_id="$(xdotool search --onlyvisible --class 'PCSX-Redux|PCSX|pcsx|Redux|redux' 2>/dev/null | head -n 1 || true)"
+            fi
+            if [ -z "$window_id" ]; then
+              echo "CAPTURE_RESULT=$label no visible PCSX-Redux window found; refusing to substitute Xvfb root."
+              sed -n '1,80p' "$WORK/window-tree.txt" || true
+              return 1
+            fi
+            echo "CAPTURE_WINDOW=$label id=$window_id"
+            import -window "$window_id" -silent "$output"
+          }
           sleep 30
-          import -window root -silent "$WORK/gui-frame-30.png"
+          capture_emulator_window frame-30 "$WORK/gui-frame-30.png" || true
           sleep 30
-          import -window root -silent "$WORK/gui-frame-60.png"
+          capture_emulator_window frame-60 "$WORK/gui-frame-60.png" || true
           sleep 30
-          import -window root -silent "$WORK/gui-frame-90.png"
+          capture_emulator_window frame-90 "$WORK/gui-frame-90.png" || true
           set +e
           wait "$emu_pid"
           rc=$?
@@ -248,7 +264,11 @@ jobs:
           echo "GUI_PROCESS_EXIT=$rc (124 is expected when the 100-second cap is reached)"
           for frame in "$WORK/gui-frame-30.png" "$WORK/gui-frame-60.png" "$WORK/gui-frame-90.png"; do
             echo "FRAME=$frame"
-            identify -format 'FRAME_METRICS width=%w height=%h mean=%[mean] stddev=%[standard-deviation] colors=%k\n' "$frame"
+            if [ ! -f "$frame" ]; then
+              echo "FRAME_RESULT=not captured from an emulator window"
+              continue
+            fi
+            identify -format 'FRAME_METRICS width=%w height=%h mean=%[mean] stddev=%[standard-deviation] colors=%k\\n' "$frame"
             echo "OCR_TEXT_BEGIN"
             tesseract "$frame" stdout -l jpn+eng 2>/dev/null | head -20 || true
             echo "OCR_TEXT_END"
@@ -272,7 +292,7 @@ jobs:
             rm -f "$WORK/game.bin" "$WORK/game.cue" "$WORK/game-run.cue" "$WORK/openbios-chunked.bin" "$WORK/release.json"
             rm -f "$WORK/pcsx-head.AppImage" "$WORK/anylinux.AppImage"
             rm -f "$WORK/boot.log" "$WORK/gui.log" "$WORK/frame.png" "$WORK/ocr.tsv" "$WORK/probe_screen.py"
-            rm -f "$WORK/anylinux.log" "$WORK/anylinux.stdout" "$WORK/upstream-head.log" "$WORK/upstream-head.stdout" "$WORK/gui-probe.log" "$WORK/gui-probe.stdout" "$WORK/gui-frame-10.png" "$WORK/gui-frame-20.png" "$WORK/gui-frame-30.png" "$WORK/gui-frame-60.png" "$WORK/gui-frame-90.png" "$WORK/gui_probe.sh"
+            rm -f "$WORK/anylinux.log" "$WORK/anylinux.stdout" "$WORK/upstream-head.log" "$WORK/upstream-head.stdout" "$WORK/gui-probe.log" "$WORK/gui-probe.stdout" "$WORK/gui-frame-10.png" "$WORK/gui-frame-20.png" "$WORK/gui-frame-30.png" "$WORK/gui-frame-60.png" "$WORK/gui-frame-90.png" "$WORK/gui_probe.sh" "$WORK/window-tree.txt"
             rm -rf "$WORK/anylinux" "$WORK/head" "$WORK/home" "$WORK/home-anylinux" "$WORK/home-upstream-head" "$WORK/home-gui-anylinux" "$WORK/squashfs-root" "$WORK/profile"
           fi
           echo "Private ROM/BIOS files, profiles, logs and both extracted emulator trees removed from the ephemeral runner."
