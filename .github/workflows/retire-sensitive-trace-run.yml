@@ -1,0 +1,38 @@
+name: Retire sensitive CPU trace run logs
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/retire-sensitive-trace-run.yml"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  retire-one-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Delete only the previously audited raw-instruction trace run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          URL="https://api.github.com/repos/zuppasoupfifaistimewa-png/naruto-shinobi-jintori-runner/actions/runs/39001985849"
+          status="$(curl --silent --show-error --output "$RUNNER_TEMP/delete-response.txt" --write-out '%{http_code}' \
+            --request DELETE \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "$URL")"
+          echo "DELETE_RUN_HTTP_STATUS=$status"
+          if [ "$status" = "204" ]; then
+            echo "RETENTION_RESULT=run 39001985849 deleted; unrelated runs were not targeted."
+          else
+            cat "$RUNNER_TEMP/delete-response.txt"
+            echo "::error::GitHub did not confirm deletion of run 39001985849."
+            exit 1
+          fi
