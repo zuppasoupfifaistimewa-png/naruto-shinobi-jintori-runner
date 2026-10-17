@@ -121,7 +121,7 @@ jobs:
             "$PCSX_BUILD_IMAGE" sh -lc 'ldd /project/pcsx-redux | tee /project/pcsx-runtime-deps.txt; ! grep -q "not found" /project/pcsx-runtime-deps.txt'
           echo "PCSX_BUILD_RESULT=compiled pinned source with built-in CPU trace API; dependency check and runtime use the same builder image"
 
-      - name: Capture a short built-in CPU trace around executable entry
+      - name: Capture boot progress and aggregate built-in CPU trace
         run: |
           set -eu
           cd "$WORK"
@@ -132,37 +132,75 @@ jobs:
           print("PAD_SETUP=port1 analog device connected and remapped")
 
           local vsyncs = 0
-          local traceStart = 1620
-          local traceStop = 1680
           PCSX.CPU.Trace.clear()
           PCSX.CPU.Trace.disable()
+
+          local function summarizeTrace(window, frame)
+            local total = PCSX.CPU.Trace.size()
+            local first = math.max(0, total - 200)
+            local counts = {}
+            local sampled = 0
+            for i = first, total - 1 do
+              local rendered = PCSX.CPU.Trace.getLine(i)
+              local pc = string.match(rendered, "^%s*([%x]+)")
+              if pc then
+                pc = string.lower(pc)
+                counts[pc] = (counts[pc] or 0) + 1
+                sampled = sampled + 1
+              end
+            end
+            local entries = {}
+            for pc, count in pairs(counts) do
+              entries[#entries + 1] = { pc = pc, count = count }
+            end
+            table.sort(entries, function(left, right)
+              if left.count == right.count then return left.pc < right.pc end
+              return left.count > right.count
+            end)
+            print(string.format(
+              "CPU_TRACE_SUMMARY window=%s frame=%d total_records=%d sampled_records=%d unique_pc=%d",
+              window, frame, total, sampled, #entries))
+            for i = 1, math.min(8, #entries) do
+              print(string.format("CPU_TRACE_PC_HOT window=%s pc=0x%s count=%d",
+                window, entries[i].pc, entries[i].count))
+            end
+          end
+
           local listener
           listener = PCSX.Events.createEventListener('GPU::Vsync', function()
             vsyncs = vsyncs + 1
             if vsyncs % 30 == 0 then
-              print(string.format("VSYNC_TRACE frame=%d", vsyncs))
+              local regs = PCSX.getRegisters()
+              if regs ~= nil then
+                print(string.format("GUEST_PC_SAMPLE frame=%d pc=0x%08x",
+                  vsyncs, tonumber(regs.pc)))
+              else
+                print(string.format("GUEST_PC_SAMPLE frame=%d pc=unavailable", vsyncs))
+              end
             end
-            if vsyncs == traceStart then
+
+            if vsyncs == 1620 or vsyncs == 4500 then
               PCSX.CPU.Trace.clear()
               PCSX.CPU.Trace.enable()
-              print("CPU_TRACE_WINDOW=enabled frame=" .. tostring(vsyncs))
-            elseif vsyncs == traceStop then
+              local window = vsyncs == 1620 and "early" or "late"
+              print(string.format("CPU_TRACE_WINDOW=enabled window=%s frame=%d",
+                window, vsyncs))
+            elseif vsyncs == 1680 then
               PCSX.CPU.Trace.disable()
-              local total = PCSX.CPU.Trace.size()
-              print("CPU_TRACE_SIZE=" .. tostring(total))
-              local first = math.max(0, total - 80)
-              for i = first, total - 1 do
-                print("CPU_TRACE_LINE index=" .. tostring(i) .. " " .. PCSX.CPU.Trace.getLine(i))
-              end
-              print("CPU_TRACE_WINDOW=disabled and last 80 records printed")
+              summarizeTrace("early", vsyncs)
+              print("CPU_TRACE_WINDOW=disabled window=early")
+            elseif vsyncs == 4560 then
+              PCSX.CPU.Trace.disable()
+              summarizeTrace("late", vsyncs)
+              print("CPU_TRACE_WINDOW=disabled window=late")
             end
           end)
-          print("VSYNC_TRACE=counter listener installed; built-in CPU trace scheduled for frames 1620-1680")
+          print("VSYNC_TRACE=guest-PC sampling every 30 VSync; aggregate trace windows at frames 1620-1680 and 4500-4560")
           LUA
           )
           set +e
           mkdir -p "$WORK/home-trace"
-          timeout --signal=TERM --kill-after=5s 35s \
+          timeout --signal=TERM --kill-after=5s 90s \
             docker run --rm -i -u "$(id -u):$(id -g)" \
             -e HOME=/work/home-trace -e LIBGL_ALWAYS_SOFTWARE=1 -e MESA_GL_VERSION_OVERRIDE=3.3 \
             -v "$WORK:/work" -w /work "$PCSX_BUILD_IMAGE" \
@@ -172,23 +210,30 @@ jobs:
             -stdout -lua_stdout -logfile /work/cpu-trace.log > "$WORK/cpu-trace.stdout" 2>&1
           rc=$?
           set -e
-          echo "TRACE_PROCESS_EXIT=$rc (124 means the 35-second observation cap was reached; emulator ran inside the same pinned Docker image as the build)"
-          echo "Selected boot, VSync and instruction-trace markers:"
-          grep -E 'PAD_SETUP=|VSYNC_TRACE|CPU_TRACE|Loaded BIOS:|OpenBIOS detected|CD-ROM Label:|CD-ROM ID:|CD-ROM EXE Name:|SYSTEM.CNF|BOOT =|\[CHUNK1\] done|EXEC:PC0|Execute !|Unknown command for pad|FATAL|Exception|Error|ERROR' \
-            "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null | tail -160 || true
-          if grep -q 'VSYNC_TRACE frame=' "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null; then
-            echo "TRACE_RESULT=VSync counter callbacks fired."
+          echo "TRACE_PROCESS_EXIT=$rc (124 means the 90-second observation cap was reached; not by itself a guest crash)"
+
+          echo "BOOT_MARKERS_BEGIN"
+          grep -hE 'Loaded BIOS:|OpenBIOS detected|CD-ROM Label:|CD-ROM ID:|CD-ROM EXE Name:|SYSTEM\.CNF|BOOT =|\[CHUNK1\] done|EXEC:PC0|Execute !|Unknown command for pad|FATAL|Exception|Failed|failed|ERROR' \
+            "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null || true
+          echo "BOOT_MARKERS_END"
+
+          echo "TRACE_DIAGNOSTICS_BEGIN"
+          grep -hE '^(PAD_SETUP=|GUEST_PC_SAMPLE |VSYNC_TRACE=|CPU_TRACE_WINDOW=|CPU_TRACE_SUMMARY|CPU_TRACE_PC_HOT|TRACE_RESULT=|CPU_TRACE_RESULT=)' \
+            "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null || true
+          echo "TRACE_DIAGNOSTICS_END"
+
+          if grep -q 'GUEST_PC_SAMPLE frame=' "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null; then
+            echo "TRACE_RESULT=VSync callbacks and periodic guest-PC sampling fired."
           else
-            echo "TRACE_RESULT=No VSync counter samples recorded; inspect startup/boot markers before interpreting a guest hang."
+            echo "TRACE_RESULT=No periodic guest-PC samples recorded; inspect boot markers before diagnosing guest behavior."
           fi
-          if grep -q 'CPU_TRACE_LINE index=' "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null; then
-            echo "CPU_TRACE_RESULT=Built-in instruction records were printed."
+          if grep -q 'CPU_TRACE_SUMMARY window=early' "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null; then
+            echo "CPU_TRACE_RESULT=Early and/or late CPU-trace windows aggregated without printing instruction operands."
           else
-            echo "CPU_TRACE_RESULT=No built-in instruction records were printed."
+            echo "CPU_TRACE_RESULT=No completed early trace summary; inspect boot markers and PC samples."
           fi
           if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
-            echo "::warning::Trace process exited early with code $rc"
-            tail -120 "$WORK/cpu-trace.stdout" || true
+            echo "::warning::Trace process exited before the observation cap with code $rc"
           fi
 
       - name: Remove temporary game files, BIOS, emulator and logs
