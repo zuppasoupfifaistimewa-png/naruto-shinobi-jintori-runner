@@ -89,7 +89,7 @@ jobs:
         run: |
           set -eu
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends xvfb xauth libgl1-mesa-dri jq imagemagick tesseract-ocr tesseract-ocr-jpn xdotool x11-utils
+          sudo apt-get install -y --no-install-recommends xvfb xauth libgl1-mesa-dri mesa-utils jq imagemagick tesseract-ocr tesseract-ocr-jpn xdotool x11-utils
 
       - name: Download and extract the pinned AnyLinux build
         env:
@@ -279,10 +279,22 @@ jobs:
           chmod +x "$WORK/gui_probe.sh"
           export WORK GUI_HOME="$WORK/home-gui-anylinux" APP_PATH="$WORK/anylinux/squashfs-root/AppRun" PAD_SETUP
           mkdir -p "$GUI_HOME"
+          echo "===== GUI PROBE: GL capability under same Xvfb/software-rendering environment ====="
+          timeout 15s xvfb-run -a --server-args="-screen 0 1280x800x24" \
+            env LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 glxinfo -B 2>&1 | head -60 || true
           echo "===== GUI PROBE: AnyLinux with private ROM and Port 1 Analog ====="
           # The screenshots remain inside the ephemeral runner and are removed in cleanup.
           timeout --signal=TERM --kill-after=5s 115s xvfb-run -a \
             --server-args="-screen 0 1280x800x24" bash "$WORK/gui_probe.sh"
+          echo "===== GUI detailed stdout tail (temporary; no screenshot or game file is uploaded) ====="
+          tail -120 "$WORK/gui-probe.stdout" 2>/dev/null || true
+          echo "===== GUI detailed PCSX logfile tail ====="
+          tail -120 "$WORK/gui-probe.log" 2>/dev/null || true
+          if grep -q 'PAD_SETUP=port1 analog device connected and remapped' "$WORK/gui-probe.stdout" "$WORK/gui-probe.log" 2>/dev/null; then
+            echo "GUI_LUA_RESULT=command-line Lua setup marker observed"
+          else
+            echo "GUI_LUA_RESULT=command-line Lua setup marker not observed; GUI initialization may not have reached the script stage"
+          fi
           echo "Both builds used the same ROM, temporary CUE, OpenBIOS, CPU interpreter and 90-second limit."
           echo "A timeout or EXEC:PC0 marker alone does not prove a visible title screen or playable input."
       - name: Remove private media and both emulator builds
