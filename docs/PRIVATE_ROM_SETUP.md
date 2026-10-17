@@ -1,66 +1,48 @@
-# Secure private ROM provisioning for the public runner
+# Secure private ROM provisioning and cloud test status
 
-This setup keeps the Naruto research repository private and prevents the ROM from entering Git history or the public runner repository. **The ROM itself is not yet present as an asset in the private release**, and the workflow cannot work in `run_game=true` mode until the two remaining GitHub UI steps below are completed.
+**Status checked:** 2026-10-17
 
-## 1. Upload two files to the existing private research release
+This workflow keeps the Naruto research repository private and downloads game media only into an ephemeral GitHub-hosted runner. The ROM, CUE, diagnostic OpenBIOS, emulator extraction, settings profile, captured frames, and logs are not committed to this public runner repository.
 
-Open the existing release in the private repository:
+## Current configuration — verified, do not repeat setup
+
+The private research release is:
 
 https://github.com/zuppasoupfifaistimewa-png/naruto-shinobi-jintori-research/releases/tag/research-emulator-pcsx-redux-2026-10-15
 
-Use **Edit release**, then attach these files as release assets. Keep the repository private.
+The assets expected by the workflow are already present with the following normalized names:
 
-| Required asset name | Source / verification |
-|---|---|
-| `Naruto - Shinobi no Sato no Jintori Gassen (Japan).bin` | ROM already in the user's Library/local copy; expected size 325,989,552 bytes; expected SHA-256 `58c389a794375b7b81b3a18877ef7965356a1332285a3590170efbf2359a3b88` |
-| `naruto-shinobi-jintori.cue` | Matching CUE sheet from the research files; must reference the ROM image above |
+- `Naruto.-.Shinobi.no.Sato.no.Jintori.Gassen.Japan.bin`
+- `Naruto.-.Shinobi.no.Sato.no.Jintori.Gassen.Japan.cue`
+- `openbios-chunked.bin`
+- `PCSX-Redux-HEAD-x86_64.AppImage`
 
-The release already contains `openbios-chunked.bin`, so do not upload the BIOS again. Do not upload the ROM or CUE to this public runner repository. A private release is still a hosted copy of copyrighted game media; only upload it if you have the right to make that private copy and store it there.
+The release API and the completed runner job verified that the required assets were found. The latest completed boot-test run also verified the ROM's expected size (325,989,552 bytes) and SHA-256 (`58c389a794375b7b81b3a18877ef7965356a1332285a3590170efbf2359a3b88`). The CUE was structurally checked and normalized only in a temporary copy.
 
-The currently available GitHub connector in this ChatGPT session cannot upload binary release assets. That upload must be completed in the GitHub UI by a repository owner. Uploading from the laptop browser is only for transfer/storage; the emulator itself will run on the cloud runner, not on the laptop.
+The public runner Actions log confirms that the secret `NARUTO_RESEARCH_READ_TOKEN` is present; its value was not printed. Do not paste tokens or secrets into chat, workflow code, issues, or commits. Do not re-upload ROM/CUE or recreate the secret unless a later test explicitly shows a real configuration failure.
 
-## 2. Create a fine-grained read-only token
+## Run the cloud boot test
 
-Create a fine-grained personal access token at:
-
-https://github.com/settings/personal-access-tokens/new
-
-Recommended settings:
-
-- Resource owner: `zuppasoupfifaistimewa-png`
-- Repository access: **Only select repositories** → `naruto-shinobi-jintori-research`
-- Repository permissions: **Contents: Read-only** (Metadata is included as a required read permission)
-- Choose an expiration date and keep the token private.
-
-This permission is sufficient for reading private release metadata and downloading release assets through the GitHub REST API. Do not use a classic token or a token with write/admin permissions. Never paste the token into chat, workflow YAML, an issue, or a commit.
-
-## 3. Add the token as a secret to the public runner repository
-
-Open:
-
-https://github.com/zuppasoupfifaistimewa-png/naruto-shinobi-jintori-runner/settings/secrets/actions/new
-
-Set:
-
-- Name: `NARUTO_RESEARCH_READ_TOKEN`
-- Secret: paste the fine-grained token value
-
-Only trusted maintainers should have write access to the public runner repository. Anyone with write access can modify a workflow that receives this secret, so keep that access limited. The token itself is read-only and scoped to the private Naruto research repository.
-
-## 4. Run the cloud test
-
-Open:
+Workflow:
 
 https://github.com/zuppasoupfifaistimewa-png/naruto-shinobi-jintori-runner/actions/workflows/naruto-private-rom-test.yml
 
-Choose **Run workflow**:
-- `run_game = false`: runs a short GUI smoke test without ROM or BIOS.
-- `run_game = true`: downloads the exact ROM, matching CUE and existing OpenBIOS from the private release, checks ROM size/SHA-256, then attempts a bounded boot for up to 90 seconds.
+Choose **Run workflow** and set `run_game = true`. The job verifies the pinned AnyLinux PCSX-Redux build, downloads ROM/CUE/OpenBIOS from the private release using the read-only secret, checks the ROM size and hash, then runs bounded headless and GUI probes.
 
-The workflow runs on an ephemeral GitHub-hosted Linux runner. It removes the local ROM, CUE, BIOS, profile and logs after the job. It does not upload ROM, screenshots, save states or RAM dumps as artifacts. GitHub logs include only selected diagnostic lines, not a full raw memory dump.
+- `run_game = false` is only a short emulator GUI smoke test; it does not download game media.
+- The current GUI probe captures the PCSX-Redux window itself when it can find it, not the Xvfb root background. It records image metrics and OCR text in the job log without publishing screenshot files.
+- The workflow has a bounded runtime. Its cleanup step removes private game files, BIOS, emulator trees, profiles, temporary frames, and logs from the ephemeral runner.
+- Do not commit ROM, BIOS, save states, memory dumps, screenshots, or credentials to this repository.
 
-## 5. What a pass means
+## What the current evidence means
 
-Even if the boot workflow passes its shell commands, that does **not** automatically prove the game reached a visible title/menu or that controls work. Inspect the boot markers first, then add a controlled screenshot/pixel or debugger-state check that does not publish game images. Only after boot and input are confirmed should Story Mode tests begin.
+Completed test: [Actions #38975931679](https://github.com/zuppasoupfifaistimewa-png/naruto-shinobi-jintori-runner/actions/runs/38975931679).
 
-See the workflow here: `.github/workflows/naruto-private-rom-test.yml`.
+That run verified the release downloads, ROM size/hash, BIOS recognition, disc label `SLPS-03553`, the `SYSTEM.CNF` boot path, completion of 187 executable chunks, and the `EXEC:PC0(80011448)` / `Execute !` markers. Port 1 was set to Analog and the previous `Unknown command for pad: 43` warning no longer appeared. This proves that the loader transferred control to the game executable in the headless probes; it does **not** prove the title/menu appeared or that input/gameplay works.
+
+The previous GUI image analysis captured the Xvfb root rather than the emulator window, so its all-black metrics were not sufficient to describe the game's rendered output. A corrected run is in progress:
+
+- [Actions #39000276365 — corrected GUI window capture](https://github.com/zuppasoupfifaistimewa-png/naruto-shinobi-jintori-runner/actions/runs/39000276365)
+- [Actions #39000257139 — source-built CPU trace with runtime dependency check](https://github.com/zuppasoupfifaistimewa-png/naruto-shinobi-jintori-runner/actions/runs/39000257139)
+
+Do not begin Story Mode rule experiments until a recognizable title/menu and a controlled input response are evidenced. A passing shell job, live emulator process, or `EXEC:PC0` marker alone is not enough.
