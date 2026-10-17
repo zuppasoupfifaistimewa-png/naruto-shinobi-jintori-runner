@@ -225,78 +225,95 @@ jobs:
           run_probe anylinux "$WORK/anylinux/squashfs-root/AppRun"
           run_probe upstream-head "$WORK/head/squashfs-root/AppRun"
 
-          # A separate GUI probe tests rendering after the controller protocol warning is gone.
+          # Compare GUI rendering for both AppImages, using separate fresh profiles and Xvfb servers.
           cat > "$WORK/gui_probe.sh" <<'SH'
           #!/usr/bin/env bash
           set -eu
+          log_prefix="$WORK/gui-$GUI_LABEL"
           timeout --signal=TERM --kill-after=4s 100s env \
             HOME="$GUI_HOME" LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 \
             "$APP_PATH" -bios "$WORK/openbios-chunked.bin" -iso "$WORK/game-run.cue" \
             -exec "$PAD_SETUP" -run -interpreter -softgpu -stdout -lua_stdout \
-            -logfile "$WORK/gui-probe.log" > "$WORK/gui-probe.stdout" 2>&1 &
+            -logfile "$log_prefix.log" > "$log_prefix.stdout" 2>&1 &
           emu_pid=$!
           capture_emulator_window() {
             label="$1"
             output="$2"
-            xwininfo -root -tree > "$WORK/window-tree.txt" 2>&1 || true
+            xwininfo -root -tree > "$WORK/window-tree-$GUI_LABEL.txt" 2>&1 || true
             window_id="$(xdotool search --onlyvisible --name 'PCSX-Redux|PCSX|pcsx|Redux|redux' 2>/dev/null | head -n 1 || true)"
             if [ -z "$window_id" ]; then
               window_id="$(xdotool search --onlyvisible --class 'PCSX-Redux|PCSX|pcsx|Redux|redux' 2>/dev/null | head -n 1 || true)"
             fi
             if [ -z "$window_id" ]; then
-              echo "CAPTURE_RESULT=$label no visible PCSX-Redux window found; refusing to substitute Xvfb root."
-              sed -n '1,80p' "$WORK/window-tree.txt" || true
+              echo "CAPTURE_RESULT=$GUI_LABEL/$label no visible PCSX-Redux window found; refusing to substitute Xvfb root."
+              sed -n '1,80p' "$WORK/window-tree-$GUI_LABEL.txt" || true
               return 1
             fi
-            echo "CAPTURE_WINDOW=$label id=$window_id"
+            echo "CAPTURE_WINDOW=$GUI_LABEL/$label id=$window_id"
             import -window "$window_id" -silent "$output"
           }
           sleep 30
-          capture_emulator_window frame-30 "$WORK/gui-frame-30.png" || true
+          capture_emulator_window frame-30 "$log_prefix-frame-30.png" || true
           sleep 30
-          capture_emulator_window frame-60 "$WORK/gui-frame-60.png" || true
+          capture_emulator_window frame-60 "$log_prefix-frame-60.png" || true
           sleep 30
-          capture_emulator_window frame-90 "$WORK/gui-frame-90.png" || true
+          capture_emulator_window frame-90 "$log_prefix-frame-90.png" || true
           set +e
           wait "$emu_pid"
           rc=$?
           set -e
-          echo "GUI_PROCESS_EXIT=$rc (124 is expected when the 100-second cap is reached)"
-          for frame in "$WORK/gui-frame-30.png" "$WORK/gui-frame-60.png" "$WORK/gui-frame-90.png"; do
+          echo "GUI_PROCESS_EXIT=$GUI_LABEL/$rc (124 is expected at the 100-second observation cap)"
+          for frame in "$log_prefix-frame-30.png" "$log_prefix-frame-60.png" "$log_prefix-frame-90.png"; do
             echo "FRAME=$frame"
             if [ ! -f "$frame" ]; then
               echo "FRAME_RESULT=not captured from an emulator window"
               continue
             fi
-            identify -format 'FRAME_METRICS width=%w height=%h mean=%[mean] stddev=%[standard-deviation] colors=%k\\n' "$frame"
-            echo "OCR_TEXT_BEGIN"
+            identify -format 'FRAME_METRICS label=%f width=%w height=%h mean=%[mean] stddev=%[standard-deviation] colors=%k\\n' "$frame"
+            echo "OCR_TEXT_BEGIN label=$GUI_LABEL"
             tesseract "$frame" stdout -l jpn+eng 2>/dev/null | head -20 || true
-            echo "OCR_TEXT_END"
+            echo "OCR_TEXT_END label=$GUI_LABEL"
           done
-          echo "GUI boot and pad markers:"
-          grep -E 'PAD_SETUP=|Loaded BIOS:|OpenBIOS detected|CD-ROM Label:|CD-ROM EXE Name:|EXEC:PC0|Execute !|Unknown command for pad|FATAL|Exception|Error|ERROR' "$WORK/gui-probe.stdout" "$WORK/gui-probe.log" 2>/dev/null | tail -50 || true
+          echo "GUI boot and pad markers ($GUI_LABEL):"
+          grep -E 'PAD_SETUP=|Loaded BIOS:|OpenBIOS detected|CD-ROM Label:|CD-ROM EXE Name:|EXEC:PC0|Execute !|Unknown command for pad|FATAL|Exception|Error|ERROR' "$log_prefix.stdout" "$log_prefix.log" 2>/dev/null | tail -50 || true
+          if grep -q 'PAD_SETUP=port1 analog device connected and remapped' "$log_prefix.stdout" "$log_prefix.log" 2>/dev/null; then
+            echo "GUI_LUA_RESULT=$GUI_LABEL setup marker observed"
+          else
+            echo "GUI_LUA_RESULT=$GUI_LABEL setup marker absent"
+          fi
+          if grep -q 'EXEC:PC0(80011448)' "$log_prefix.stdout" "$log_prefix.log" 2>/dev/null; then
+            echo "GUI_BOOT_RESULT=$GUI_LABEL reached executable entry"
+          else
+            echo "GUI_BOOT_RESULT=$GUI_LABEL did not reach/log executable entry in GUI mode"
+          fi
+          if grep -q 'Unknown command for pad: 43' "$log_prefix.stdout" "$log_prefix.log" 2>/dev/null; then
+            echo "GUI_PAD_RESULT=$GUI_LABEL unrecognized command 0x43 present"
+          else
+            echo "GUI_PAD_RESULT=$GUI_LABEL no unrecognized command 0x43 observed"
+          fi
           SH
           chmod +x "$WORK/gui_probe.sh"
-          export WORK GUI_HOME="$WORK/home-gui-anylinux" APP_PATH="$WORK/anylinux/squashfs-root/AppRun" PAD_SETUP
-          mkdir -p "$GUI_HOME"
           echo "===== GUI PROBE: GL capability under same Xvfb/software-rendering environment ====="
           timeout 15s xvfb-run -a --server-args="-screen 0 1280x800x24" \
             env LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 glxinfo -B 2>&1 | head -60 || true
-          echo "===== GUI PROBE: AnyLinux with private ROM and Port 1 Analog ====="
-          # The screenshots remain inside the ephemeral runner and are removed in cleanup.
-          timeout --signal=TERM --kill-after=5s 115s xvfb-run -a \
-            --server-args="-screen 0 1280x800x24" bash "$WORK/gui_probe.sh"
-          echo "===== GUI detailed stdout tail (temporary; no screenshot or game file is uploaded) ====="
-          tail -120 "$WORK/gui-probe.stdout" 2>/dev/null || true
-          echo "===== GUI detailed PCSX logfile tail ====="
-          tail -120 "$WORK/gui-probe.log" 2>/dev/null || true
-          if grep -q 'PAD_SETUP=port1 analog device connected and remapped' "$WORK/gui-probe.stdout" "$WORK/gui-probe.log" 2>/dev/null; then
-            echo "GUI_LUA_RESULT=command-line Lua setup marker observed"
-          else
-            echo "GUI_LUA_RESULT=command-line Lua setup marker not observed; GUI initialization may not have reached the script stage"
-          fi
-          echo "Both builds used the same ROM, temporary CUE, OpenBIOS, CPU interpreter and 90-second limit."
-          echo "A timeout or EXEC:PC0 marker alone does not prove a visible title screen or playable input."
+
+          run_gui_probe() {
+            label="$1"
+            app_path="$2"
+            export GUI_LABEL="$label" GUI_HOME="$WORK/home-gui-$label" APP_PATH="$app_path"
+            mkdir -p "$GUI_HOME"
+            echo "===== GUI PROBE: $label with private ROM and Port 1 Analog ====="
+            timeout --signal=TERM --kill-after=5s 115s xvfb-run -a \
+              --server-args="-screen 0 1280x800x24" bash "$WORK/gui_probe.sh"
+            echo "===== GUI detailed stdout tail: $label (temporary) ====="
+            tail -80 "$WORK/gui-$label.stdout" 2>/dev/null || true
+            echo "===== GUI detailed PCSX logfile tail: $label (temporary) ====="
+            tail -80 "$WORK/gui-$label.log" 2>/dev/null || true
+          }
+          # Same ROM/CUE, BIOS, pad setup, observation windows, Xvfb geometry and renderer.
+          run_gui_probe anylinux "$WORK/anylinux/squashfs-root/AppRun"
+          run_gui_probe upstream-head "$WORK/head/squashfs-root/AppRun"
+          echo "GUI comparison complete. A timeout or EXEC:PC0 marker alone does not prove a visible title screen or playable input."
       - name: Remove private media and both emulator builds
         if: always()
         run: |
