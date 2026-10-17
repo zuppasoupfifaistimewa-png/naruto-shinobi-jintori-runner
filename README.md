@@ -28,4 +28,4 @@ Standard GitHub-hosted runners are free for public repositories, subject to GitH
 
 ## Secure private ROM test
 
-Setup guide: [docs/PRIVATE_ROM_SETUP.md](docs/PRIVATE_ROM_SETUP.md). The private release asset upload and `NARUTO_RESEARCH_READ_TOKEN` secret still require setup in GitHub's web UI. The workflow defaults to a safe smoke-only mode and downloads no private ROM unless manually dispatched with `run_game=true`.
+Setup/status guide: [docs/PRIVATE_ROM_SETUP.md](docs/PRIVATE_ROM_SETUP.md). The private release assets and `NARUTO_RESEARCH_READ_TOKEN` secret have been verified by a completed cloud run; do not repeat setup unless a later run identifies a real failure. The workflow defaults to smoke-only mode and downloads private media only when dispatched with `run_game=true`.
