@@ -19,7 +19,7 @@ jobs:
   trace-private-rom:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Trace private ROM CPU state' }}
     runs-on: ubuntu-26.04
-    timeout-minutes: 25
+    timeout-minutes: 45
     env:
       API: https://api.github.com/repos/zuppasoupfifaistimewa-png/naruto-shinobi-jintori-research
       RELEASE_TAG: research-emulator-pcsx-redux-2026-10-15
@@ -29,6 +29,7 @@ jobs:
       EXPECTED_ROM_SIZE: "325989552"
       EXPECTED_ROM_SHA256: 58c389a794375b7b81b3a18877ef7965356a1332285a3590170efbf2359a3b88
       PCSX_SOURCE_COMMIT: 6b9df482d7b77b9ae218d9c48c1ce1a43c265206
+      PCSX_BUILD_IMAGE: ghcr.io/grumpycoders/pcsx-redux-build@sha256:d9ae6cbb23a5d0d98d8c3702cc6f512698ee1670bf8d59b236b2baabe99a66e4
 
     steps:
       - name: Check required secret
@@ -46,7 +47,7 @@ jobs:
         run: |
           set -eu
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends jq libcapstone-dev
+          sudo apt-get install -y --no-install-recommends jq
           WORK="$RUNNER_TEMP/naruto-cpu-trace"
           mkdir -p "$WORK"
           echo "WORK=$WORK" >> "$GITHUB_ENV"
@@ -108,19 +109,17 @@ jobs:
           grep -q 'Trace = {' "$WORK/pcsx-redux/src/core/pcsxffi.lua"
           git -C "$WORK/pcsx-redux" rev-parse HEAD
           docker version
-          docker pull ghcr.io/grumpycoders/pcsx-redux-build:latest
-          docker image inspect --format 'PCSX_BUILD_IMAGE={{index .RepoDigests 0}}' ghcr.io/grumpycoders/pcsx-redux-build:latest
+          docker pull "$PCSX_BUILD_IMAGE"
+          docker image inspect --format 'PCSX_BUILD_IMAGE={{index .RepoDigests 0}}' "$PCSX_BUILD_IMAGE"
           docker run --rm -i -u "$(id -u):$(id -g)" -w /project \
             -v "$WORK/pcsx-redux:/project" \
-            ghcr.io/grumpycoders/pcsx-redux-build:latest make -j2
+            "$PCSX_BUILD_IMAGE" make -j2
           test -x "$WORK/pcsx-redux/pcsx-redux"
-          echo "PCSX runtime shared-library dependencies:"
-          ldd "$WORK/pcsx-redux/pcsx-redux" | tee "$WORK/pcsx-runtime-deps.txt"
-          if grep -q 'not found' "$WORK/pcsx-runtime-deps.txt"; then
-            echo "::error::PCSX-Redux has unresolved host runtime dependencies."
-            exit 1
-          fi
-          echo "PCSX_BUILD_RESULT=compiled pinned source with built-in CPU trace API and resolved runtime dependencies"
+          echo "PCSX runtime shared-library dependencies inside the pinned builder image:"
+          docker run --rm -u "$(id -u):$(id -g)" -w /project \
+            -v "$WORK/pcsx-redux:/project" \
+            "$PCSX_BUILD_IMAGE" sh -lc 'ldd /project/pcsx-redux | tee /project/pcsx-runtime-deps.txt; ! grep -q "not found" /project/pcsx-runtime-deps.txt'
+          echo "PCSX_BUILD_RESULT=compiled pinned source with built-in CPU trace API; dependency check and runtime use the same builder image"
 
       - name: Capture a short built-in CPU trace around executable entry
         run: |
@@ -162,15 +161,18 @@ jobs:
           LUA
           )
           set +e
+          mkdir -p "$WORK/home-trace"
           timeout --signal=TERM --kill-after=5s 35s \
-            env HOME="$WORK/home-trace" LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=3.3 \
-            "$WORK/pcsx-redux/pcsx-redux" -no-ui \
-            -bios "$WORK/openbios-chunked.bin" -iso "$WORK/game-run.cue" \
+            docker run --rm -i -u "$(id -u):$(id -g)" \
+            -e HOME=/work/home-trace -e LIBGL_ALWAYS_SOFTWARE=1 -e MESA_GL_VERSION_OVERRIDE=3.3 \
+            -v "$WORK:/work" -w /work "$PCSX_BUILD_IMAGE" \
+            /work/pcsx-redux/pcsx-redux -no-ui \
+            -bios /work/openbios-chunked.bin -iso /work/game-run.cue \
             -exec "$FULL_SETUP" -run -interpreter -softgpu \
-            -stdout -lua_stdout -logfile "$WORK/cpu-trace.log" > "$WORK/cpu-trace.stdout" 2>&1
+            -stdout -lua_stdout -logfile /work/cpu-trace.log > "$WORK/cpu-trace.stdout" 2>&1
           rc=$?
           set -e
-          echo "TRACE_PROCESS_EXIT=$rc (124 means the 35-second observation cap was reached)"
+          echo "TRACE_PROCESS_EXIT=$rc (124 means the 35-second observation cap was reached; emulator ran inside the same pinned Docker image as the build)"
           echo "Selected boot, VSync and instruction-trace markers:"
           grep -E 'PAD_SETUP=|VSYNC_TRACE|CPU_TRACE|Loaded BIOS:|OpenBIOS detected|CD-ROM Label:|CD-ROM ID:|CD-ROM EXE Name:|SYSTEM.CNF|BOOT =|\[CHUNK1\] done|EXEC:PC0|Execute !|Unknown command for pad|FATAL|Exception|Error|ERROR' \
             "$WORK/cpu-trace.stdout" "$WORK/cpu-trace.log" 2>/dev/null | tail -160 || true
