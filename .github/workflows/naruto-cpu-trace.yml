@@ -46,7 +46,7 @@ jobs:
         run: |
           set -eu
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends jq
+          sudo apt-get install -y --no-install-recommends jq libcapstone-dev
           WORK="$RUNNER_TEMP/naruto-cpu-trace"
           mkdir -p "$WORK"
           echo "WORK=$WORK" >> "$GITHUB_ENV"
@@ -114,7 +114,13 @@ jobs:
             -v "$WORK/pcsx-redux:/project" \
             ghcr.io/grumpycoders/pcsx-redux-build:latest make -j2
           test -x "$WORK/pcsx-redux/pcsx-redux"
-          echo "PCSX_BUILD_RESULT=compiled pinned source with built-in CPU trace API"
+          echo "PCSX runtime shared-library dependencies:"
+          ldd "$WORK/pcsx-redux/pcsx-redux" | tee "$WORK/pcsx-runtime-deps.txt"
+          if grep -q 'not found' "$WORK/pcsx-runtime-deps.txt"; then
+            echo "::error::PCSX-Redux has unresolved host runtime dependencies."
+            exit 1
+          fi
+          echo "PCSX_BUILD_RESULT=compiled pinned source with built-in CPU trace API and resolved runtime dependencies"
 
       - name: Capture a short built-in CPU trace around executable entry
         run: |
